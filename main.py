@@ -43,8 +43,8 @@ print("torch.device:", device)
 
 
 """ 데이터셋 생성 """
-dataset_cat = CustomDataset(PATH_ORIGINAL_CAT + IMG_FORMAT, label=0)
-dataset_dog = CustomDataset(PATH_ORIGINAL_DOG + IMG_FORMAT, label=1)
+dataset_cat = CustomDataset(PATH_ORIGINAL_CAT + IMG_FORMAT, label=0)    # cat: 0
+dataset_dog = CustomDataset(PATH_ORIGINAL_DOG + IMG_FORMAT, label=1)    # dog: 1
 
 
 """ 데이터 분할 """
