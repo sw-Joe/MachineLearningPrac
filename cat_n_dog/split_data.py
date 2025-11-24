@@ -1,10 +1,10 @@
 import json
 
 import torch
-from torch.utils.data import DataLoader, random_split
-
 from parameter import BATCH_SIZE, IMG_FORMAT, PATH_ORIGINAL_CAT, PATH_ORIGINAL_DOG, SEED
 from preprocessing import CustomDataset
+from torch.utils.data import DataLoader, random_split
+from torch.utils.data.dataset import Subset
 
 """  GPU 존재 확인 """
 device = torch.device("cpu")
@@ -34,20 +34,24 @@ dog_train, dog_test = random_split(
     dataset_dog, [train_size_dog, test_size_dog]
 )
 
+# torch.save(cat_train.indices, "cat_train_indices.pth")
+# torch.save(dog_train.indices, "dog_train_indices.pth")
+torch.save(cat_test.indices, "cat_test_indices.pth")
+torch.save(dog_test.indices, "dog_test_indices.pth")
 
-# train, test 분할을 저장하기 위한 json파일 생성
-# 인덱스 저장 - indices : torch.utils.data.Subset
-split_info = {
-    "cat_train": cat_train.indices,
-    "cat_test": cat_test.indices,
-    "dog_train": dog_train.indices,
-    "dog_test": dog_test.indices
-}
+# # train, test 분할을 저장하기 위한 json파일 생성
+# # 인덱스 저장 - indices : torch.utils.data.Subset
+# split_info = {
+#     "cat_train": cat_train.indices,
+#     "cat_test": cat_test.indices,
+#     "dog_train": dog_train.indices,
+#     "dog_test": dog_test.indices
+# }
 
-with open("dataset_split.json", "w") as f:
-    json.dump(split_info, f, indent=4)
+# with open("dataset_split.json", "w") as f:
+#     json.dump(split_info, f, indent=4)
 
-print("Split saved → dataset_split.json")
+# print("Split saved → dataset_split.json")
 
 
 # 고양이 + 강아지 데이터를 통합하여 사용

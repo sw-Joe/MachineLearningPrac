@@ -4,23 +4,24 @@ import random
 import torch.cuda
 from torch import load, max, no_grad
 from torch.utils.data import DataLoader
+from torch.utils.data.dataset import Subset
 
 from model import CNN
 from preprocessing import CustomDataset
-from parameter import BATCH_SIZE, SEED
+from parameter import BATCH_SIZE, IMG_FORMAT, PATH_ORIGINAL_CAT, PATH_ORIGINAL_DOG , SEED
 
 
 
 
 
-""" 평가 """
-def recreation():
-    random.seed(SEED)
+"""  """
+# def recreation():
+#     random.seed(SEED)
 
-    with open("dataset_split.json", "r") as f:
-        test_list_idxs = json.load(f)    # 파일명 목록의 인덱스에 해당하는 기록들의 모음
+#     with open("dataset_split.json", "r") as f:
+#         test_list_idxs = json.load(f)    # 파일명 목록의 인덱스에 해당하는 기록들의 모음
 
-    return seed, test_list_idxs
+#     return seed, test_list_idxs
 
 
 """ 모델 평가 """
@@ -86,26 +87,37 @@ def eval_specific(model, model_PATH, test_loader, classes):
 
 
 if __name__ == "__main__":
-    seed, test_list = recreation()
+    # seed, test_list = recreation()
 
     """  GPU 존재 확인 """
     device = torch.device("cpu")
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed_all(SEED)
         device = torch.device("cuda")
     print("torch.device:", device)
 
-    # 
-    dataset_cat = CustomDataset(test_list["cat_test"], label=0)
-    dataset_dog = CustomDataset(test_list["dog_test"], label=1)
 
-    testset_loader = DataLoader(dataset_cat+dataset_dog, batch_size=BATCH_SIZE, shuffle=True)
+    dataset_cat = CustomDataset(PATH_ORIGINAL_CAT + IMG_FORMAT, label=0)
+    dataset_dog = CustomDataset(PATH_ORIGINAL_DOG + IMG_FORMAT, label=1)
+
+    # train_idx_cat = torch.load("cat_train_indices.pth")
+    # train_idx_dog = torch.load("dog_train_indices.pth")
+    test_idx_cat  = torch.load("cat_test_indices.pth")
+    test_idx_dog  = torch.load("dog_test_indices.pth")
+
+    # trainset_cat = Subset(dataset_cat, train_idx_cat)
+    # trainset_dog = Subset(dataset_dog, train_idx_dog)
+    testset_cat = Subset(dataset_cat, test_idx_cat)
+    testset_dog = Subset(dataset_dog, test_idx_dog)
+
+
+    testset_loader = DataLoader(testset_cat+testset_dog, batch_size=BATCH_SIZE, shuffle=True)
 
     cnn_model = CNN().to(device)    # 모델 생성(+ 모델을 GPU로 이동)
 
     classes = ['cat', 'dog']
 
 
-    path_saved = input("model_PATH>")
+    path_saved = "cat_n_dog_CNN.pth"
     eval(cnn_model, path_saved, testset_loader)
     eval_specific(cnn_model, path_saved, testset_loader, classes)
