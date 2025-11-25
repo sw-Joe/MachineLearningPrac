@@ -1,0 +1,13 @@
+{
+    "Seed" : 100,
+    "hyper_parameter": {
+        "total_epoch": 50,
+        "batch_size": 64
+    },
+    "path": {
+        "cat": "imgs/original/cat/",
+        "dog": "imgs/original/dog/",
+        "extension": ".jpg",
+        "model_save": "./cat_n_dog_CNN.pth"
+    }
+}

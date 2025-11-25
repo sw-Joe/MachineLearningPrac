@@ -11,4 +11,4 @@ IMG_FORMAT = "*.jpg"
 
 ''' HYPER PARAMETERS '''
 TOTAL_EPOCH = 50
-BATCH_SIZE = 128    # batch가 작으면 GPU 사용 효과(병렬 연산의 장점)를 살리기 어려움
+BATCH_SIZE = 32    
