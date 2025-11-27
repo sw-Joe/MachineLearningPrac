@@ -1,11 +1,12 @@
 from glob import glob
 
 import numpy as np
-
-# import pandas as pd
 import torch.cuda
+
 from cv2 import COLOR_BGR2RGB, INTER_LINEAR, cvtColor, imread, resize
 from torch.utils.data import Dataset
+
+
 
 TARGET_SIZE = 128    # 리사이징 목표 크기 / ?
 
@@ -16,33 +17,21 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 """ 데이터셋 전처리 """
 class CustomDataset(Dataset): 
-    """
-    커스텀 데이터셋, 일종의 데이터 로더의 내부구현
-    """
+    """커스텀 데이터셋, 일종의 데이터 로더의 내부구현"""
 
-    def __init__(self, dir: str, label: int, file_list=None):
-        """
-        데이터셋의 전처리를 해주는 부분
-        """
+    def __init__(self, dir: str, label: int) -> None:
+        """데이터셋의 전처리를 해주는 부분"""
         self.dir: str = dir
         self.label: int = label
-        # self.img_list: list = glob(dir)
-        self.img_list = file_list
-        # 입력으로 파일이 존재하는 디렉토리명 또는 파일 이름 목록을 사용
-        if (self.img_list == None):
-            self.img_list = glob(dir)
-        else:
-            pass
+        self.img_list: list = glob(dir)
 
 
     def __len__(self):
-        """
-        데이터셋의 길이. 즉, 총 샘플의 수를 적어주는 부분
-        """
+        """데이터셋의 길이. 즉, 총 샘플의 수를 적어주는 부분"""
         return len(self.img_list)
 
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int) -> tuple:
         """
         데이터셋에서 특정 1개의 샘플을 가져오는 함수
         단일 아이템 호출시 처리

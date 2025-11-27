@@ -16,8 +16,9 @@ venv.bak/
 .ipynb_checkpoints
 
 # ML dataset
-cat_n_dog/imgs/
+cat_n_dog/img/
 MNIST/mnist_png
+wandb/
 
 # vscode
 .vscode/

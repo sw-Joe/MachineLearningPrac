@@ -31,7 +31,6 @@ def verify_defective_img(img_matrix):
     return 
 '''
 
-
 def img_matrix_conversion(target_path: str) -> list:
     size_stats : list[list[int]] = [[], []]
 
@@ -45,23 +44,12 @@ def img_matrix_conversion(target_path: str) -> list:
             continue
 
         matrix = cvtColor(img_matrix, COLOR_BGR2RGB)    # [[[H, W, C], [], ...] ...]
-        
-        # tensor = torch.from_numpy(img).permute(2, 0, 1)    # (C, H, W), 텐서로 변환
-        # matrix = tensor.permute(1, 2, 0)    # numpy에서 사용하기 위해 (H, W, C) 순서로 변경
-        # matrix = tvio.io.read_image(img)    # (C, H, W) uint8: (채널, 높이, 너비) 컴퓨터 비전 분야에서 사용되는 포맷
-        # matrix = matrix.permute(1, 2, 0).numpy()
 
         h, w, _ = matrix.shape
         size_stats[0].append(h)
         size_stats[1].append(w)
 
     return size_stats
-
-
-# # DEBUG
-# n_img = len(glob(PATH_CAT_IMG))
-# n_img_converted = len(size_stats)
-# print(n_img, n_img_converted, n_img-n_img_converted)
 
 
 if __name__ == "__main__":
