@@ -17,11 +17,11 @@ print("torch.device:", DEVICE)
 
 
 """ 모델 평가 """
-def model_test(model, model_PATH, test_loader) -> None:
+def model_test(model, model_status_PATH, test_loader) -> None:
     """
     전체 데이터셋에 대한 평가
     """
-    model.load_state_dict(load(model_PATH))
+    model.load_state_dict(load(model_status_PATH))
 
     dataiter = iter(test_loader)
     imgs, labels = next(dataiter)
