@@ -2,6 +2,7 @@ from glob import glob
 
 import numpy as np
 import torch.cuda
+from torchvision import transforms
 
 from cv2 import COLOR_BGR2RGB, INTER_LINEAR, cvtColor, imread, resize
 from torch.utils.data import Dataset
@@ -9,6 +10,23 @@ from torch.utils.data import Dataset
 
 
 TARGET_SIZE = 128    # 리사이징 목표 크기 / ?
+
+# transforms는 기본적으로 PIL 이미지 기반: 변환 필요
+"""
+transform = transforms.Compose([
+    # transforms.RandomResizedCrop(128, scale=(0.8, 1.0)),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.ColorJitter(
+        brightness=0.2,
+        contrast=0.2,
+        saturation=0.2,
+        hue=0.1
+    ),
+    transforms.ToTensor(),
+    transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                         std=[0.229, 0.224, 0.225]),
+])
+"""
 
 
 """  GPU 존재 확인 """
@@ -24,6 +42,7 @@ class CustomDataset(Dataset):
         self.dir: str = dir
         self.label: int = label
         self.img_list: list = glob(dir)
+        # self.transform = transform
 
 
     def __len__(self):
@@ -45,6 +64,9 @@ class CustomDataset(Dataset):
 
         matrix = cvtColor(img_matrix, COLOR_BGR2RGB)    # [[[H, W, C], [], ...] ...] 
 
+        # transformer
+        # transformed = self.transform(matrix)
+        
 
         """ 이미지 행렬 리사이징 함수 """
         h, w = matrix.shape[:2]
