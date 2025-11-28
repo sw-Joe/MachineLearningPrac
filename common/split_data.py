@@ -2,6 +2,8 @@ import torch
 from torch.utils.data import random_split
 from torch.utils.data.dataset import Subset
 
+from cat_n_dog.config.parameter import DATA_DIR
+
 
 
 """ 데이터셋 분할 """
@@ -39,13 +41,13 @@ class DatasetSplit:
         train, val, test = random_split(self.dataset, [train_size, val_size, test_size])
 
         if save:
-            torch.save(test.indices, f"{save_title}_test_indices.pth")    # 경로 수정 필요
+            torch.save(test.indices, f"{DATA_DIR}/{save_title}_test_indices.pth")
 
         return train, val, test
 
 
-    def load_trainset(self, model_name) -> Subset:
-        test_idx  = torch.load(f"imgs/indices/{model_name}_test_indices.pth")    # 경로 수정 필요
+    def load_trainset(self, saved) -> Subset:
+        test_idx  = torch.load(f"{DATA_DIR}/{saved}_test_indices.pth")    # 경로 수정 필요
         testset = Subset(self.dataset, test_idx)
 
         return testset
