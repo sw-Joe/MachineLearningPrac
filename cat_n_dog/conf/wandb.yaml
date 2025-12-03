@@ -1,0 +1,12 @@
+model:
+  name: cat&dog classification
+
+wandb_config:
+  dataset: Cat and Dog images
+  architecture: CNN
+  optimizer: Stochastic Gradient Descent(SGD)
+  learning_rate: 0.001
+  epochs: 50
+  batch_size: 32
+  momentum: 0.9
+  train, validation, test divide proportion: 7:1:2

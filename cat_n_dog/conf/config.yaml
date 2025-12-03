@@ -1,0 +1,9 @@
+defaults:
+  - model: cnn
+  - optimizer: sgd
+  - train: default
+  - dataset: cat_n_dog
+
+seed: 100
+device: cuda
+model_name: "cat_dog_cnn"
