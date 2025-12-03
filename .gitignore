@@ -25,3 +25,6 @@ wandb/
 
 # setuptools
 *.egg-info/
+
+# hydra
+outputs/
