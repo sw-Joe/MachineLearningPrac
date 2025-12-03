@@ -17,8 +17,11 @@ venv.bak/
 
 # ML dataset
 cat_n_dog/img/
-MNIST/mnist_png
+mnist/mnist_png
 wandb/
 
 # vscode
 .vscode/
+
+# setuptools
+*.egg-info/
