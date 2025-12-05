@@ -61,7 +61,7 @@ def main(cfg: DictConfig):
 
 
     """ 모델 상태 저장 """
-    path_save = f"./{cfg.model_name}_cat_n_dog_CNN.pth"
+    path_save = f"./modelFile_{cfg.model_name}.pth"
     print("model: ", path_save)
     torch.save(cnn_model.state_dict(), path_save)
 
@@ -74,7 +74,7 @@ def main(cfg: DictConfig):
     testset_loader = DataLoader(test_set, batch_size=cfg.train.batch_size, shuffle=False)
 
 
-    path_model_status_saved = f"./cat_n_dog_CNN_{cfg.train.batch_size}.pth"
+    path_model_status_saved = f"./modelFile_{cfg.model_name}.pth"
 
     model_test(cnn_model, path_model_status_saved, testset_loader)
     classes = ['cat', 'dog']

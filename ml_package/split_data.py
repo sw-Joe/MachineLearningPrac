@@ -39,13 +39,13 @@ class DatasetSplit:
         train, val, test = random_split(self.dataset, [train_size, val_size, test_size])
 
         if save:
-            torch.save(test.indices, f"./{save_title}_test_indices.pth")
+            torch.save(test.indices, f"./testIndices_{save_title}.pth")
 
         return train, val, test
 
 
     def load_trainset(self, saved) -> Subset:
-        test_idx  = torch.load(f"{saved}_test_indices.pth")    # 경로 수정 필요
+        test_idx  = torch.load(f"testIndices_{saved}.pth")    # 경로 수정 필요
         testset = Subset(self.dataset, test_idx)
 
         return testset
