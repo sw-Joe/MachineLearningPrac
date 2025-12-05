@@ -1,5 +1,4 @@
-git 
-  path_cat: "img/original/cat/*.jpg"
-  path_dog: "img/original/dog/*.jpg"
-  target_size: 128
-  split: [0.7, 0.1, 0.2]
+path_cat: "cat_n_dog/img/original/cat/*.jpg"
+path_dog: "cat_n_dog/img/original/dog/*.jpg"
+target_size: 128
+split: [0.7, 0.1, 0.2]

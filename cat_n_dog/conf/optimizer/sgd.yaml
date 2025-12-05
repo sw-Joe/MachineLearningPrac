@@ -1,4 +1,3 @@
-optimizer:
-  name: sgd
-  lr: 0.001
-  momentum: 0.9
+name: sgd
+lr: 0.001
+momentum: 0.9
