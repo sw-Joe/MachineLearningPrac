@@ -44,7 +44,7 @@ class DatasetSplit:
         return train, val, test
 
 
-    def load_trainset(self, saved) -> Subset:
+    def load_testset(self, saved) -> Subset:
         test_idx  = torch.load(f"testIndices_{saved}.pth")    # 경로 수정 필요
         testset = Subset(self.dataset, test_idx)
 
