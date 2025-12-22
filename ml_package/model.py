@@ -21,11 +21,19 @@ class CNN(nn.Module):
         self.fc2 = nn.Linear(120, 84)
         self.fc3 = nn.Linear(84, 2)    # cat/dog → 2 classes
 
+        self.dropout = nn.Dropout(p=0.5)
+        
+
     def forward(self, x):
         x = self.pool(F.relu(self.conv1(x)))
         x = self.pool(F.relu(self.conv2(x)))
         x = flatten(x, 1) # 배치를 제외한 모든 차원을 평탄화(flatten)
+        
         x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        
         x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        
         x = self.fc3(x)
         return x
