@@ -2,7 +2,7 @@ from glob import glob
 
 import numpy as np
 import torch.cuda
-from torchvision import transforms
+# from torchvision import transforms
 
 from cv2 import COLOR_BGR2RGB, INTER_LINEAR, cvtColor, imread, resize
 from torch.utils.data import Dataset
@@ -68,12 +68,13 @@ class CustomDataset(Dataset):
         
 
         """ 이미지 행렬 리사이징 함수 """
+        # 보간법: 이미지 리사이징 중앙 크롭, letterbox resize(padding)
         h, w = matrix.shape[:2]
         scale = self.target_size / max(h, w)
 
         # 1. 비율 유지하며 리사이즈
         new_h, new_w = int(h * scale), int(w * scale)
-        resized = resize(matrix, (new_w, new_h), interpolation=INTER_LINEAR)
+        resized = resize(matrix, (new_w, new_h), interpolation=INTER_LINEAR)    # 선형 보간
         # resized = resized.astype(np.uint8)    # 2번 실행 과정에서 dtype오류 발생시
 
         # 2. 정사각형 캔버스 생성
