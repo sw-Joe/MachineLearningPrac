@@ -8,11 +8,12 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+from ml_package.metric import Metrics
 from ml_package.model import CNN
 from ml_package.preprocessing import CustomDataset
 from ml_package.split_data import DatasetSplit
 from ml_package.train import train
-from ml_package.test import model_test, model_test_each_class
+from ml_package.test import model_test, model_test_each_class, model_test_confusion_matrix
 
 
 
@@ -37,8 +38,8 @@ def main(cfg: DictConfig):
 
 
     """ customPackage.split을 이용한 데이터 분할 """
-    cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(cfg.dataset.split, cfg.model_name)
-    dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(cfg.dataset.split, cfg.model_name)
+    cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(cfg.dataset.split, cfg.model_name+"_cat")
+    dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(cfg.dataset.split, cfg.model_name+"_dog")
 
     train_set = cat_train + dog_train
     validation_set = cat_val + dog_val
@@ -57,7 +58,7 @@ def main(cfg: DictConfig):
 
 
     """ 학습 진행 """
-    # train(cnn_model, optimizer, criterion, trainset_loader, valset_loader, TOTAL_EPOCH)
+    train(cnn_model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs)
 
 
     """ 모델 상태 저장 """
@@ -67,8 +68,8 @@ def main(cfg: DictConfig):
 
 
     """ 모델 테스트 """
-    cat_test = DatasetSplit(dataset_cat).load_trainset(cfg.model_name)
-    dog_test = DatasetSplit(dataset_dog).load_trainset(cfg.model_name)
+    cat_test = DatasetSplit(dataset_cat).load_testset(cfg.model_name+"_cat")
+    dog_test = DatasetSplit(dataset_dog).load_testset(cfg.model_name+"_dog")
     test_set = cat_test + dog_test
 
     testset_loader = DataLoader(test_set, batch_size=cfg.train.batch_size, shuffle=False)
@@ -79,6 +80,7 @@ def main(cfg: DictConfig):
     model_test(cnn_model, path_model_status_saved, testset_loader)
     classes = ['cat', 'dog']
     model_test_each_class(cnn_model, path_model_status_saved, testset_loader, classes)
+    model_test_confusion_matrix(cnn_model, path_model_status_saved, testset_loader, classes)
 
 
 if __name__ == "__main__":
