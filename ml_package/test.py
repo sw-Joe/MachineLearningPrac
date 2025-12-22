@@ -1,6 +1,10 @@
+from ml_package.metric import Metrics
+
 from torch import load, max, no_grad
 import torch.cuda
-
+from sklearn.metrics import confusion_matrix, classification_report
+import seaborn as sns
+import matplotlib.pyplot as plt
 
 
 """  GPU 존재 확인 """
@@ -10,17 +14,13 @@ if torch.cuda.is_available():
     DEVICE = torch.device("cuda")
 
 
-# PARAMETER를 json파일로 저장하는 경우 불러오기
-# with open("dataset_split.json", "r") as f:
-#     test_list_idxs = json.load(f)    # 파일명 목록의 인덱스에 해당하는 기록들의 모음
-
-
 """ 모델 평가 """
-def model_test(model, model_status_PATH, test_loader) -> None:
+def model_test(model, model_status, test_loader) -> None:
     """
     전체 데이터셋에 대한 평가
     """
-    model.load_state_dict(load(model_status_PATH))
+    model.load_state_dict(load(model_status))
+    model.eval()
 
     dataiter = iter(test_loader)
     imgs, labels = next(dataiter)
@@ -44,11 +44,12 @@ def model_test(model, model_status_PATH, test_loader) -> None:
     print(f'Accuracy of the network on the test_image_set: {100 * correct // total} %')
 
 
-def model_test_each_class(model, model_PATH, test_loader, classes) -> None:
+def model_test_each_class(model, model_status, test_loader, classes) -> None:
     """
     어떤 것들을 더 잘 분류하고, 어떤 것들을 더 못했는지
     """
-    model.load_state_dict(load(model_PATH))
+    model.load_state_dict(load(model_status))
+    model.eval()
 
     dataiter = iter(test_loader)
     imgs, labels = next(dataiter)
@@ -77,6 +78,45 @@ def model_test_each_class(model, model_PATH, test_loader, classes) -> None:
         print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
 
 
-""" confusion matrix """
+def model_test_confusion_matrix(model, model_status_PATH, test_loader, classes) -> None:
+    """
+    이진 분류(cat vs dog)에 대한 confusion matrix 및 평가 지표 출력
+    """
+    model.load_state_dict(torch.load(model_status_PATH))
+    model.eval()
 
-"""  """
+    y_true = []
+    y_pred = []
+
+    with no_grad():
+        for imgs, labels in test_loader:
+            imgs = imgs.to(DEVICE)
+            labels = labels.to(DEVICE)
+
+            outputs = model(imgs)
+            _, predicted = max(outputs, 1)
+
+            y_true.extend(labels.cpu().numpy())
+            y_pred.extend(predicted.cpu().numpy())
+
+    # confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+
+    plt.figure(figsize=(4, 3))
+    sns.heatmap(
+        cm,
+        annot=True,
+        fmt='d',
+        cmap='Blues',
+        xticklabels=classes,
+        yticklabels=classes
+    )
+    plt.xlabel("Prediction")
+    plt.ylabel("Ground Truth")
+    plt.title("Confusion Matrix (Cat vs Dog)")
+    plt.tight_layout()
+    plt.savefig("confusion_matrix.png")
+    plt.close()
+
+    # classification report
+    print(classification_report(y_true, y_pred, target_names=classes))
