@@ -10,6 +10,7 @@ class Metrics:
         self.predict = predict
 
 
+    # 평가지표를 패키지가 아닌 직접 계산하도록 다시 작성
     def _accuracy(self):
         return accuracy_score(self.test, self.predict)
     
