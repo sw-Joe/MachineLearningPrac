@@ -1,9 +1,64 @@
-defaults:
-  - model: cnn
-  - optimizer: sgd
-  - train: default
-  - dataset: cat_n_dog
-
+# ========================================
+# 프로젝트 설정
+# ========================================
 seed: 100
 device: cuda
 model_name: "cat_dog_cnn"
+
+# ========================================
+# 데이터셋 설정
+# ========================================
+dataset:
+  path_cat: "cat_n_dog/img/original/cat/*.jpg"
+  path_dog: "cat_n_dog/img/original/dog/*.jpg"
+  target_size: 128
+  split: [0.7, 0.1, 0.2]
+
+# ========================================
+# 모델 설정
+# ========================================
+model:
+  name: "Model2"
+  input_size: 128
+  num_classes: 2
+
+# ========================================
+# 옵티마이저 설정
+# ========================================
+optimizer:
+  name: sgd
+  lr: 0.001
+  momentum: 0.9
+
+# ========================================
+# 훈련 설정
+# ========================================
+train:
+  batch_size: 128
+  epochs: 50
+  # num_workers: 4
+  # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  # pin_memory: true    
+  # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
+  # 전송량에 따라 성능에 영향을 줄 수 있음
+
+# ========================================
+# WandB 설정 (통합)
+# ========================================
+wandb:
+  enabled: true
+  project: "cat-dog-classification"
+  entity: null
+  tags:
+    - cnn
+    - pytorch
+  
+  log:
+    log_freq: 100
+    log_model: true
+    log_gradients: false
+  
+  metadata:
+    dataset: "Cat and Dog images"
+    architecture: "CNN"
+    task: "binary_classification"
