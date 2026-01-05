@@ -1,27 +1,57 @@
 # import random
+from time import time, localtime, strftime
 
 import hydra
 from omegaconf import DictConfig
+import wandb
 # from pathlib import Path
 import torch.cuda
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
-from ml_package.metric import Metrics
-from ml_package.model import CNN
+# from ml_package.metric import Metrics
+from ml_package.model import Model1, Model2
 from ml_package.preprocessing import CustomDataset
 from ml_package.split_data import DatasetSplit
 from ml_package.train import train
-from ml_package.test import model_test, model_test_each_class, model_test_confusion_matrix
+from ml_package.test import model_test, model_test_confusion_matrix
 
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
-    # if __name__ ==  '__main__':
-    #     '''재현을 위한 시드 '''
-    #     random.seed(SEED)
+    """ 로깅을 위한 시간변수 """
+    T_STR = strftime('%y-%m-%d_%H-%M-%S', localtime(time()))
+    PROJECT = cfg.wandb.project
+    CONFIG = {
+        "model_name": cfg.model.name,
+        "dataset": cfg.wandb.metadata.dataset,
+        "architecture": cfg.wandb.metadata.architecture,
+        "optimizer": cfg.optimizer.name,
+        "learning_rate": cfg.optimizer.lr,
+        "momentum": cfg.optimizer.momentum,
+        "epochs": cfg.train.epochs,
+        "batch_size": cfg.train.batch_size,
+        "split": cfg.dataset.split,
+    }
+    print(f"run name(time) : {T_STR}")
+    print(f"project : {PROJECT}")
+    print(f"config : {CONFIG}")
+
+
+    """ Wandb 기록 여부 플래그에 따른 초기화 """
+    if cfg.wandb.enabled:
+        RUN = wandb.init(
+            # entity="sw-joe-kunkuk-glocal-university",
+            project = PROJECT,
+            # cfg의 모든 설정을 wandb config로 전달
+            config = CONFIG,
+            tags = cfg.wandb.tags
+        )
+    else:
+        RUN = None
+
 
     """  GPU 존재 확인 """
     DEVICE = torch.device("cpu")
@@ -35,7 +65,6 @@ def main(cfg: DictConfig):
     # 데이터에 대한 라벨링 및 처리기능
     dataset_cat = CustomDataset(cfg.dataset.path_cat, label=0, target_resize=cfg.dataset.target_size)
     dataset_dog = CustomDataset(cfg.dataset.path_dog, label=1, target_resize=cfg.dataset.target_size)
-
 
     """ customPackage.split을 이용한 데이터 분할 """
     cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(cfg.dataset.split, cfg.model_name+"_cat")
@@ -51,23 +80,25 @@ def main(cfg: DictConfig):
     valset_loader = DataLoader(validation_set, batch_size=cfg.train.batch_size, shuffle=True)
 
 
-    """ 모델, 옵티마이저, 비용함수 인스턴스 생성 """ 
-    cnn_model = CNN().to(DEVICE)    # 모델 생성(+ 모델을 GPU로 이동)
+    """ 모델, 옵티마이저, 비용함수 인스턴스 생성 """
+    cnn_model = Model2().to(DEVICE)    # 모델 생성(+ 모델을 GPU로 이동)
     optimizer = optim.SGD(cnn_model.parameters(), lr=cfg.optimizer.lr, momentum=cfg.optimizer.momentum)    # 옵티마이저 생성: Stochastic Gradient Descent
     criterion = nn.CrossEntropyLoss()    # 비용(손실)함수 객체 생성
 
 
-    """ 학습 진행 """
-    train(cnn_model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs)
+    """ 학습 """
+    # 최적 모델을 저장
+    train(cnn_model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, T_STR)
 
 
-    """ 모델 상태 저장 """
-    path_save = f"./modelFile_{cfg.model_name}.pth"
-    print("model: ", path_save)
-    torch.save(cnn_model.state_dict(), path_save)
+    # """ 모델 상태 저장 """
+    # path_save = f"./modelStat_{T_STR}.pth"
+    # print("model: ", path_save)
+    # torch.save(cnn_model.state_dict(), path_save)
 
 
     """ 모델 테스트 """
+    ''' 테스트 데이터 로드 '''
     cat_test = DatasetSplit(dataset_cat).load_testset(cfg.model_name+"_cat")
     dog_test = DatasetSplit(dataset_dog).load_testset(cfg.model_name+"_dog")
     test_set = cat_test + dog_test
@@ -75,12 +106,12 @@ def main(cfg: DictConfig):
     testset_loader = DataLoader(test_set, batch_size=cfg.train.batch_size, shuffle=False)
 
 
-    path_model_status_saved = f"./modelFile_{cfg.model_name}.pth"
-
-    model_test(cnn_model, path_model_status_saved, testset_loader)
+    path_model_status_saved = f"./best_model_{time}.pt"
     classes = ['cat', 'dog']
-    model_test_each_class(cnn_model, path_model_status_saved, testset_loader, classes)
-    model_test_confusion_matrix(cnn_model, path_model_status_saved, testset_loader, classes)
+
+    model_test(cnn_model, path_model_status_saved, testset_loader, classes)
+    # model_test_each_class(cnn_model, path_model_status_saved, testset_loader, classes)
+    model_test_confusion_matrix(cnn_model, path_model_status_saved, testset_loader, classes, T_STR)
 
 
 if __name__ == "__main__":
