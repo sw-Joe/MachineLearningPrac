@@ -1,5 +1,6 @@
 # import random
-from time import time, localtime, strftime
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import hydra
 from omegaconf import DictConfig
@@ -15,14 +16,16 @@ from ml_package.model import Model1, Model2
 from ml_package.preprocessing import CustomDataset
 from ml_package.split_data import DatasetSplit
 from ml_package.train import train
-from ml_package.test import model_test, model_test_confusion_matrix
+from ml_package.evaluation import evaluation, eval_confusion_matrix, visualize_classification_results
 
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
     """ 로깅을 위한 시간변수 """
-    T_STR = strftime('%y-%m-%d_%H-%M-%S', localtime(time()))
+    kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
+
+    NOW = kst_now.strftime('%y-%m-%d_%H-%M-%S')
     PROJECT = cfg.wandb.project
     CONFIG = {
         "model_name": cfg.model.name,
@@ -35,7 +38,7 @@ def main(cfg: DictConfig):
         "batch_size": cfg.train.batch_size,
         "split": cfg.dataset.split,
     }
-    print(f"run name(time) : {T_STR}")
+    print(f"run name(time) : {NOW}")
     print(f"project : {PROJECT}")
     print(f"config : {CONFIG}")
 
@@ -53,11 +56,18 @@ def main(cfg: DictConfig):
         RUN = None
 
 
-    """  GPU 존재 확인 """
+    """  GPU 존재 확인, 재현성 보장 """
     DEVICE = torch.device("cpu")
+    torch.manual_seed(cfg.seed)                 # 난수 시드 고정, 단일 GPU
+    g = torch.Generator().manual_seed(cfg.seed)
+    # cuDNN: NVIDIA의 딥러닝 가속 라이브러리, Convolution 등을 빠르게 계산
+    torch.backends.cudnn.deterministic = True   # cuDNN 라이브러리의 결정론적 알고리즘을 사용(성능 감소)
+    torch.backends.cudnn.benchmark = False      # cuDNN의 자동 최적화 기능(auto-tuner)을 비활성화
+
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(cfg.seed)    # 난수 제어
+        torch.cuda.manual_seed_all(cfg.seed)        # 멀티 GPU 사용 시 권장
         DEVICE = torch.device(cfg.device)
+
     print("torch.device:", DEVICE)
 
 
@@ -67,8 +77,14 @@ def main(cfg: DictConfig):
     dataset_dog = CustomDataset(cfg.dataset.path_dog, label=1, target_resize=cfg.dataset.target_size)
 
     """ customPackage.split을 이용한 데이터 분할 """
-    cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(cfg.dataset.split, cfg.model_name+"_cat")
-    dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(cfg.dataset.split, cfg.model_name+"_dog")
+    # cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(
+    #     cfg.dataset.split, cfg.model_name+"(cat)", g, save=True)
+    # dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(
+    #     cfg.dataset.split, cfg.model_name+"(dog)", g, save=True)
+    cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(
+        cfg.dataset.split, cfg.model_name+"_cat", g, False)
+    dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(
+        cfg.dataset.split, cfg.model_name+"_dog", g, False)
 
     train_set = cat_train + dog_train
     validation_set = cat_val + dog_val
@@ -76,19 +92,19 @@ def main(cfg: DictConfig):
 
     """ 데이터 로더(데이터 탑재) """
     # batch_size가 작으면 GPU 사용 효과(병렬 연산의 장점)를 살리기 어려움
-    trainset_loader = DataLoader(train_set, batch_size=cfg.train.batch_size, shuffle=True)
-    valset_loader = DataLoader(validation_set, batch_size=cfg.train.batch_size, shuffle=True)
+    # trainset_loader = DataLoader(train_set, batch_size=cfg.train.batch_size, shuffle=True)
+    # valset_loader = DataLoader(validation_set, batch_size=cfg.train.batch_size, shuffle=True)
 
 
     """ 모델, 옵티마이저, 비용함수 인스턴스 생성 """
-    cnn_model = Model2().to(DEVICE)    # 모델 생성(+ 모델을 GPU로 이동)
-    optimizer = optim.SGD(cnn_model.parameters(), lr=cfg.optimizer.lr, momentum=cfg.optimizer.momentum)    # 옵티마이저 생성: Stochastic Gradient Descent
+    model = Model2().to(DEVICE)    # 모델 생성(+ 모델을 GPU로 이동)
+    optimizer = optim.SGD(model.parameters(), lr=cfg.optimizer.lr, momentum=cfg.optimizer.momentum)    # 옵티마이저 생성: Stochastic Gradient Descent
     criterion = nn.CrossEntropyLoss()    # 비용(손실)함수 객체 생성
 
 
     """ 학습 """
     # 최적 모델을 저장
-    train(cnn_model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, T_STR)
+    # train(model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW)
 
 
     # """ 모델 상태 저장 """
@@ -99,19 +115,19 @@ def main(cfg: DictConfig):
 
     """ 모델 테스트 """
     ''' 테스트 데이터 로드 '''
-    cat_test = DatasetSplit(dataset_cat).load_testset(cfg.model_name+"_cat")
-    dog_test = DatasetSplit(dataset_dog).load_testset(cfg.model_name+"_dog")
+    cat_test = DatasetSplit(dataset_cat).load_testset(cfg.model_name+"(cat)")
+    dog_test = DatasetSplit(dataset_dog).load_testset(cfg.model_name+"(dog)")
     test_set = cat_test + dog_test
 
     testset_loader = DataLoader(test_set, batch_size=cfg.train.batch_size, shuffle=False)
 
-
-    path_model_status_saved = f"./best_model_{time}.pt"
+    NOW = "26-01-06_20-22-29"
+    path_model_status_saved = f"./best_model_{NOW}.pt"
     classes = ['cat', 'dog']
 
-    model_test(cnn_model, path_model_status_saved, testset_loader, classes)
-    # model_test_each_class(cnn_model, path_model_status_saved, testset_loader, classes)
-    model_test_confusion_matrix(cnn_model, path_model_status_saved, testset_loader, classes, T_STR)
+    evaluation(model, path_model_status_saved, testset_loader, classes)
+    eval_confusion_matrix(model, path_model_status_saved, testset_loader, classes, NOW)
+    visualize_classification_results(model, path_model_status_saved, testset_loader, classes, NOW)
 
 
 if __name__ == "__main__":
