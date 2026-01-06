@@ -4,7 +4,8 @@ import numpy as np
 import torch.cuda
 # from torchvision import transforms
 
-from cv2 import COLOR_BGR2RGB, INTER_LINEAR, cvtColor, imread, resize
+import cv2 as cv
+# from cv2 import COLOR_BGR2RGB, INTER_LINEAR, cvtColor, imread, resize
 from torch.utils.data import Dataset
 
 
@@ -54,14 +55,14 @@ class CustomDataset(Dataset):
         데이터셋에서 특정 1개의 샘플을 가져오는 함수
         단일 아이템 호출시 처리
         """
-        # img_name = self.img_list[idx]
-        img_matrix = imread(self.img_list[idx])  # BGR, HEIC(HEIF), AVIF 미지원
+        ### img_file_name = self.img_list[idx]
+        img_matrix = cv.imread(self.img_list[idx])  # BGR, HEIC(HEIF), AVIF 미지원
 
         # 읽을 수 없는 이미지를 읽는 경우
         if img_matrix is None:
             print("can't read img", self.img_list[idx])
 
-        matrix = cvtColor(img_matrix, COLOR_BGR2RGB)    # [[[H, W, C], [], ...] ...] 
+        matrix = cv.cvtColor(img_matrix, cv.COLOR_BGR2RGB)    # [[[H, W, C], [], ...] ...] 
 
         # transformer
         # transformed = self.transform(matrix)
@@ -74,7 +75,7 @@ class CustomDataset(Dataset):
 
         # 1. 비율 유지하며 리사이즈
         new_h, new_w = int(h * scale), int(w * scale)
-        resized = resize(matrix, (new_w, new_h), interpolation=INTER_LINEAR)    # 선형 보간
+        resized = cv.resize(matrix, (new_w, new_h), interpolation=cv.INTER_LINEAR)    # 선형 보간
         # resized = resized.astype(np.uint8)    # 2번 실행 과정에서 dtype오류 발생시
 
         # 2. 정사각형 캔버스 생성
