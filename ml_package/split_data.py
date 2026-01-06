@@ -12,7 +12,7 @@ class DatasetSplit:
     def __init__(self, dataset):
         self.dataset = dataset
 
-    def t_v_t_split(self, proportion: list[float], save_title, save: bool = True) -> tuple[Subset, Subset, Subset]:
+    def t_v_t_split(self, proportion: list[float], save_title, generator, save: bool = True) -> tuple[Subset, Subset, Subset]:
         """
         params: 
         분할 대상 데이터셋, 
@@ -36,7 +36,7 @@ class DatasetSplit:
             test_size  = dataset_size - train_size - val_size    # 남은 것은 모두 test
 
         print("dataSet splited into :", train_size, val_size, test_size)
-        train, val, test = random_split(self.dataset, [train_size, val_size, test_size])
+        train, val, test = random_split(self.dataset, [train_size, val_size, test_size], generator=generator)
 
         if save:
             torch.save(test.indices, f"./testIndices_{save_title}.pth")
