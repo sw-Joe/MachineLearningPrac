@@ -17,8 +17,10 @@ venv.bak/
 
 # ML dataset
 cat_n_dog/img/
-mnist/mnist_png
+mnist/mnist_png/
+cifar10/cifar-10-batches-py/
 wandb/
+outputs/
 
 # vscode
 .vscode/
