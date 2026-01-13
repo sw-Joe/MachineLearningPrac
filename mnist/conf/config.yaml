@@ -1,0 +1,63 @@
+# ========================================
+# 프로젝트 설정
+# ========================================
+seed: 100
+device: cuda
+model_name: "mnist_cnn"
+
+# ========================================
+# 데이터셋 설정
+# ========================================
+dataset:
+  dir_train: "mnist/mnist_png/training/"
+  dir_test: "mnist/mnist_png/testing/"
+  target_size: 28*28
+  dataset_split: [50000, 10000, 10000]
+
+# ========================================
+# 모델 설정
+# ========================================
+model:
+  name: "Model2"
+  input_size: 128
+  num_classes: 10
+
+# ========================================
+# 옵티마이저 설정
+# ========================================
+optimizer:
+  name: sgd
+  lr: 0.005
+  momentum: 0.9
+
+# ========================================
+# 훈련 설정
+# ========================================
+train:
+  batch_size: 32
+  epochs: 50
+  # num_workers: 4    # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  # pin_memory: true    
+  # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
+  # 전송량에 따라 성능에 영향을 줄 수 있음
+
+# ========================================
+# WandB 설정 (통합)
+# ========================================
+wandb:
+  enabled: true
+  project: "MNIST-classification"
+  entity: null
+  tags:
+    - cnn
+    - pytorch
+  
+  log:
+    log_freq: 100
+    log_model: true
+    log_gradients: false
+  
+  metadata:
+    dataset: "MNIST"
+    architecture: "CNN"
+    task: "multi-class_classification"
