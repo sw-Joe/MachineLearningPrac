@@ -16,7 +16,7 @@ from ml_package.model import Model1, Model2
 from ml_package.preprocessing import CustomDataset
 from ml_package.split_data import DatasetSplit
 from ml_package.train import train
-from ml_package.evaluation import evaluation, eval_confusion_matrix, visualize_classification_results
+from ml_package.evaluation import evaluation, eval_confusion_matrix_multiclass, visualize_classification_results
 
 
 
@@ -41,6 +41,9 @@ def main(cfg: DictConfig):
     print(f"run name(time) : {NOW}")
     print(f"project : {PROJECT}")
     print(f"config : {CONFIG}")
+
+    # True: 학습&평가 모드, False: 평가
+    FLAG = True
 
 
     """ Wandb 기록 여부 플래그에 따른 초기화 """
@@ -77,40 +80,37 @@ def main(cfg: DictConfig):
     dataset_dog = CustomDataset(cfg.dataset.path_dog, label=1, target_resize=cfg.dataset.target_size)
 
     """ customPackage.split을 이용한 데이터 분할 """
-    # cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(
-    #     cfg.dataset.split, cfg.model_name+"(cat)", g, save=True)
-    # dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(
-    #     cfg.dataset.split, cfg.model_name+"(dog)", g, save=True)
-    cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(
-        cfg.dataset.split, cfg.model_name+"_cat", g, False)
-    dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(
-        cfg.dataset.split, cfg.model_name+"_dog", g, False)
+    if FLAG:
+        cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(
+            cfg.dataset.split, cfg.model_name+"(cat)", g, save=True)
+        dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(
+            cfg.dataset.split, cfg.model_name+"(dog)", g, save=True)
+    else:
+        cat_train, cat_val, cat_test = DatasetSplit(dataset_cat).t_v_t_split(
+            cfg.dataset.split, cfg.model_name+"(cat)", g, False)
+        dog_train, dog_val, dog_test = DatasetSplit(dataset_dog).t_v_t_split(
+            cfg.dataset.split, cfg.model_name+"(dog)", g, False)
 
     train_set = cat_train + dog_train
     validation_set = cat_val + dog_val
 
 
-    """ 데이터 로더(데이터 탑재) """
-    # batch_size가 작으면 GPU 사용 효과(병렬 연산의 장점)를 살리기 어려움
-    # trainset_loader = DataLoader(train_set, batch_size=cfg.train.batch_size, shuffle=True)
-    # valset_loader = DataLoader(validation_set, batch_size=cfg.train.batch_size, shuffle=True)
-
-
     """ 모델, 옵티마이저, 비용함수 인스턴스 생성 """
-    model = Model2().to(DEVICE)    # 모델 생성(+ 모델을 GPU로 이동)
+    model = Model2().to(DEVICE)    ### 모델 객체 생성(+ 모델을 GPU로 이동)
     optimizer = optim.SGD(model.parameters(), lr=cfg.optimizer.lr, momentum=cfg.optimizer.momentum)    # 옵티마이저 생성: Stochastic Gradient Descent
     criterion = nn.CrossEntropyLoss()    # 비용(손실)함수 객체 생성
 
 
-    """ 학습 """
-    # 최적 모델을 저장
-    # train(model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW)
+    if FLAG:
+        """ 데이터 로더(데이터 탑재) """
+        # batch_size가 작으면 GPU 사용 효과(병렬 연산의 장점)를 살리기 어려움
+        trainset_loader = DataLoader(train_set, batch_size=cfg.train.batch_size, shuffle=True)
+        valset_loader = DataLoader(validation_set, batch_size=cfg.train.batch_size, shuffle=True)
 
 
-    # """ 모델 상태 저장 """
-    # path_save = f"./modelStat_{T_STR}.pth"
-    # print("model: ", path_save)
-    # torch.save(cnn_model.state_dict(), path_save)
+        """ 학습 """
+        # 최적 모델을 저장
+        train(model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW)
 
 
     """ 모델 테스트 """
@@ -121,12 +121,16 @@ def main(cfg: DictConfig):
 
     testset_loader = DataLoader(test_set, batch_size=cfg.train.batch_size, shuffle=False)
 
-    NOW = "26-01-06_20-22-29"
+    if FLAG:
+        pass
+    else:
+        NOW = "26-01-06_20-22-29"    # 테스트에 사용할 모델의 run_name(시간정보)를 명시
+
     path_model_status_saved = f"./best_model_{NOW}.pt"
     classes = ['cat', 'dog']
 
     evaluation(model, path_model_status_saved, testset_loader, classes)
-    eval_confusion_matrix(model, path_model_status_saved, testset_loader, classes, NOW)
+    eval_confusion_matrix_multiclass(model, path_model_status_saved, testset_loader, classes, NOW)
     visualize_classification_results(model, path_model_status_saved, testset_loader, classes, NOW)
 
 
