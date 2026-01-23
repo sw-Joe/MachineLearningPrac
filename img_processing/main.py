@@ -8,7 +8,7 @@ SRC = r"./img/test.jpeg"
 RESULT = r"./img/result_rotate.jpeg"
 
 
-# 이미지-행렬-이미지 변환(PNG)
+""" 이미지-행렬-이미지 변환"""
 def img_load(func):
     def wrapper(self, *args, **kwargs):
 
@@ -28,6 +28,7 @@ def img_load(func):
     return wrapper
 
 
+""" augmentation """
 class img_processing():
     def __init__(self, src, result):
         self.src = src
@@ -53,15 +54,6 @@ class img_processing():
         return img_matrix[::-1, :, :].copy()
 
 
-    # def lightness(self, img_matrix, lightpoint):
-    #     for h in range(img_matrix.shape[0]):
-    #         for w in range(img_matrix.shape[1]):
-    #             R = img[h, w, 0]
-    #             G = img[h, w, 1]
-    #             B = img[h, w, 2]
-    #             for rgb in [R, G, B]:
-    #                 rgb = np.clip(rgb + lightpoint, 0, 255)
-    #     return img_matrix.copy()
     @img_load
     def lightness(self, img_matrix, lightpoint: int):
         # img_matrix : HWC
@@ -70,4 +62,8 @@ class img_processing():
         return result.astype(np.uint8)
 
 
-img = img_processing(SRC, RESULT).rotate()
+if __name__ == "__main__":
+    img = img_processing(SRC, RESULT).rotate()
+    # img = img_processing(SRC, RESULT).rl_inversion()
+    # img = img_processing(SRC, RESULT).td_inversion()
+    # img = img_processing(SRC, RESULT).lightness(-100)
