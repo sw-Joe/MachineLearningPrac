@@ -1,0 +1,77 @@
+# ========================================
+# 프로젝트 설정
+# ========================================
+seed: 100
+device: cuda
+model_name: "PlainNet-layer 56"
+
+# ========================================
+# 데이터셋 설정
+# ========================================
+dataset:
+  dir: "ResNet/dataset/cifar-10-batches-py/"
+  target_size: 32*32
+  split: [45000, 5000, 10000]
+
+# ========================================
+# 모델 설정
+# ========================================
+model:
+  name: "PlainNet-layer 56"
+  input_size: 32
+  num_classes: 10
+
+# ========================================
+# Learning Rate Scheduler 설정
+# ========================================
+scheduler:
+  milestones: [82, 123]
+  gamma: 0.1
+
+# ========================================
+# 옵티마이저 설정
+# ========================================
+optimizer:
+  name: sgd
+  lr: 0.1
+  momentum: 0.9
+  w_decay: 1e-4
+
+# ========================================
+# 훈련 설정
+# ========================================
+train:
+  batch_size: 128
+  epochs: 164
+  num_workers: 4    # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  pin_memory: true    
+  # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
+  # 전송량에 따라 성능에 영향을 줄 수 있음
+
+# ========================================
+# WandB 설정 (통합)
+# ========================================
+wandb:
+  enabled: true
+  project: "CIFAR-10_classification"
+  entity: null
+  tags:
+    - cnn
+    - pytorch
+    - ResNet
+  
+  log:
+    log_freq: 100
+    log_model: true
+    log_gradients: false
+  
+  metadata:
+    dataset: "CIFAR-10"
+    architecture: "PlainNet layer-56"
+    task: "multi-class_classification"
+
+# ========================================
+# Artifacts
+# ========================================
+artifact:
+  dir: "ResNet/result/"
