@@ -1,24 +1,46 @@
-from time import perf_counter
+from dataclasses import dataclass, field
 
-# from config.log import log
 from torch import no_grad
 import torch.cuda
 import wandb
 
+from logger import count_time
 
 
-"""  GPU 존재 확인 """
+
+""" GPU 존재 확인 """
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def count_time(func):
-    def wrapper(*args, **kwargs):
-        t_start = perf_counter()
-        f = func(*args, **kwargs)
-        t_end = perf_counter()
-        print("elapsed time: ", t_end-t_start)
-        return f
-    return wrapper
+@dataclass
+class MetricTracker:
+    loss_sum: float = 0.0
+    correct: int = 0
+    total: int = 0
+
+    def _reset(self):
+        self.loss_sum = 0.0
+        self.correct = 0
+        self.total = 0
+    
+    @torch.no_grad
+    def _add_batch(self, loss_val: float, predicts, targets):
+        """배치 결과를 누적 (샘플 수 기준 가중치 반영)"""
+        batch_size = targets.size(0)
+        # loss_val은 배치 평균이므로 batch_size를 곱해 전체 합산에 더함
+        self.loss_sum += loss_val * batch_size
+        
+        preds = predicts.argmax(dim=1)
+        self.correct += (preds == targets).sum().item()
+        self.total += batch_size
+
+    @property
+    def avg_loss(self):
+        return self.loss_sum / self.total if self.total > 0 else 0.0
+
+    @property
+    def accuracy(self):
+        return self.correct / self.total if self.total > 0 else 0.0
 
 
 class EarlyStopping:
@@ -28,6 +50,7 @@ class EarlyStopping:
         self.best_loss = float("inf")
         self.counter = 0
         self.should_stop = False
+
 
     def step(self, current_loss):
         # 유의미한 개선이 있는 경우
@@ -42,140 +65,120 @@ class EarlyStopping:
             return False
 
 
-
-"""
-기본 훈련 루프
-"""
+""" 기본 훈련 루프 """
+''' (1)예측 → (2)손실 계산 → (3)그래디언트 초기화 → (4)역전파 → (5)가중치 업데이트해보기 '''
 @count_time
-def train(model, optimizer, criterion, trainset_loader, valset_loader, n_epoch: int, run, time) -> None:
+def train(model, optimizer, scheduler, criterion, trainset_loader, valset_loader, 
+          n_epoch: int, run, time, path) -> None:
     """
     @param: model, optimizer, criterion, trainset_loader, n_epoch: int\n
-    (1)예측 → (2)손실 계산 → (3)그래디언트 초기화 → (4)역전파 → (5)가중치 업데이트해보기
     """
+    # early_stopping = EarlyStopping(
+    #     patience=10,
+    #     min_delta=1e-4
+    # )
 
-    early_stopping = EarlyStopping(
-    patience=10,
-    min_delta=1e-4
-    )
+    best_val_loss = float("inf")
+    
+    # 트래커 초기화
+    train_tracker = MetricTracker()
+    val_tracker = MetricTracker()
 
-
-    # Wandb 기록 여부를 체크
-    if run != None:
-        # epoch을 별도의 x축으로 정의
-        # wandb.define_metric("epoch")
-
-        # epoch 기준으로 그려질 metric 지정
+    # Wandb 기록 on/off
+    if run is not None:
         wandb.define_metric("train/epoch_*", step_metric="epoch")
         wandb.define_metric("validation/epoch_*", step_metric="epoch")
-
-        # step 기준 metric (명시하지 않아도 되지만 가독성상 권장)
         wandb.define_metric("train/step_*")
         
+    # iter = 0
 
     for epoch in range(n_epoch):
-        train_loss_sum = 0
-        epoch_train_loss_avg = 0
-        train_correct_total = 0
-        train_total = 0
+        # 매 Epoch 시작 시 초기화
+        train_tracker._reset()
+        val_tracker._reset()
 
-        model.train()    # 모델 - 훈련모드
-
-        ### 배치 로깅 추가 ###
-
-        ''' step(mini-batch)'''
+        ''' [Train Loop] '''
+        model.train()
         for x, y in trainset_loader:
-            x_train = x.float().to(device)    # 이미지 행렬을 선형 모델에 넣기 위한 형태인 1차원 벡터로 펼침(flatten)
-            y_train = y.to(device)
+            # if iter < 400:
+            #     for param_group in optimizer.param_groups:
+            #         param_group['lr'] = 0.01
+            # elif iter == 400:
+            #     for param_group in optimizer.param_groups:
+            #         param_group['lr'] = 0.1 # 400 iter 이후 원래 LR 0.1 복구
 
-            predicts = model(x_train)                   # 1. 예측
-            train_loss = criterion(predicts, y_train)   # 2. 비용 함수            
-            optimizer.zero_grad()                       # 3. gradient 초기화
-            train_loss.backward()                       # 4. backward propagation
-            optimizer.step()                            # 5. weight 업데이트
+            # 이미지 행렬을 선형 모델에 넣기 위한 형태인 1차원 벡터로 펼침(flatten)
+            x_train, y_train = x.float().to(device), y.to(device)
 
-            train_loss_sum += train_loss.item()
-            step_train_loss = train_loss.item()
+            predicts = model(x_train)               # 1. 예측
+            loss = criterion(predicts, y_train)     # 2. 비용 함수
 
-            # 정확도
-            with torch.no_grad():
-                preds = predicts.argmax(dim=1)              # 각 샘플에 대해 가장 큰 logit을 가진 클래스 인덱스 반환
-                correct = (preds == y_train).sum().item()   # 이번 배치에서 맞춘 갯수
-                batch_size = y_train.size(0)
-                step_train_acc = correct / batch_size
+            optimizer.zero_grad()                   # 3. gradient 초기화
+            loss.backward()                         # 4. backward propagation
+            optimizer.step()                        # 5. weight 업데이트
 
-                train_correct_total += correct
-                train_total += batch_size
+            # 트래커에 배치 결과 기록
+            train_tracker._add_batch(loss.item(), predicts, y_train)
 
-            if run != None:
+            if run is not None:
                 run.log({
-                    "train/step_loss": step_train_loss,
-                    "train/step_acc": step_train_acc,
+                    "train/step_loss": loss.item(),
+                    "train/step_acc": (predicts.argmax(1) == y_train).float().mean().item(),
                 })
+            # preds = predicts.argmax(dim=1)              # 각 샘플에 대해 가장 큰 logit을 가진 클래스 인덱스 반환
+            # correct = (preds == y_train).sum().item()   # 이번 배치에서 맞춘 갯수
 
+            # iter += 1
 
-        epoch_train_loss_avg = train_loss_sum / len(trainset_loader)
-        epoch_train_acc_avg = train_correct_total / train_total
-
-
-        val_loss_sum = 0
-        epoch_val_loss_avg = 0
-        val_correct_total = 0
-        val_total = 0
-
-        model.eval()    # 모델 - 평가모드
-
-        ''' step(validation set) '''
-        with no_grad():
+        ''' [Validation Loop] '''
+        model.eval()
+        with torch.no_grad():
             for x, y in valset_loader:
-                x_train = x.float().to(device)    # 이미지 행렬을 선형 모델에 넣기 위한 형태인 1차원 벡터로 펼침(flatten)
-                y_train = y.to(device)
+                x_val, y_val = x.float().to(device), y.to(device)
+                predicts = model(x_val)
+                loss = criterion(predicts, y_val)
 
-                predicts = model(x_train)
-                val_loss = criterion(predicts, y_train)
+                # 트래커에 배치 결과 기록
+                val_tracker._add_batch(loss.item(), predicts, y_val)
 
-                val_loss_sum += val_loss.item()
+        # 에폭 결과 로깅 (Property 사용으로 계산 간소화)
+        if run is not None:
+            run.log({
+                "train/epoch_loss": train_tracker.avg_loss,
+                "train/epoch_acc": train_tracker.accuracy,
+                "validation/epoch_loss": val_tracker.avg_loss,
+                "validation/epoch_acc": val_tracker.accuracy,
+                "epoch": epoch + 1,
+            })
 
-                preds = predicts.argmax(dim=1)
-                correct = (preds == y_train).sum().item()
-                batch_size = y_train.size(0)
+        ## Early Stopping
+        # is_best = early_stopping.step(epoch_val_loss_avg)
 
-                val_correct_total += correct
-                val_total += batch_size
+        # if is_best:
+        #     torch.save(model.state_dict(), f"./{path}{time}/best_model_{time}.pt")
 
-            epoch_val_loss_avg = val_loss_sum / len(valset_loader)
-            epoch_val_acc_avg = val_correct_total / val_total
+        # if early_stopping.should_stop:
+        #     print(
+        #         f"Early stopping triggered at epoch {epoch+1} | "
+        #         f"best val loss: {early_stopping.best_loss:.6f}"
+        #     )
+        #     break
 
-            if run != None:
-                run.log({
-                    "train/epoch_loss": epoch_train_loss_avg,
-                    "train/epoch_acc": epoch_train_acc_avg,
-                    "validation/epoch_loss": epoch_val_loss_avg,
-                    "validation/epoch_acc": epoch_val_acc_avg,
-                    "epoch": epoch+1,
-                })
+        # 모델 저장 로직
+        if val_tracker.avg_loss < best_val_loss:
+            best_val_loss = val_tracker.avg_loss
+            torch.save(model.state_dict(), f"{path}{time}/best_model_{time}.pt")
+            print(f"--- Model saved at epoch {epoch+1} (Loss: {best_val_loss:.6f}) ---")
+        
+        # 스케줄러 업데이트
+        if scheduler is not None:
+            scheduler.step()
+        
+        # 학습률 로깅
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f'Epoch: {epoch+1:03d}/{n_epoch} | LR: {current_lr:.6f} | '
+              f'Train Loss: {train_tracker.avg_loss:.4f} | Val Loss: {val_tracker.avg_loss:.4f} | '
+              f'Val Acc: {val_tracker.accuracy*100:.2f}%')
 
-
-            is_best = early_stopping.step(epoch_val_loss_avg)
-
-            if is_best:
-                torch.save(model.state_dict(), f"best_model_{time}.pt")
-
-            if early_stopping.should_stop:
-                print(
-                    f"Early stopping triggered at epoch {epoch+1} | "
-                    f"best val loss: {early_stopping.best_loss:.6f}"
-                )
-                break
-
-            # # 과적합 탐지
-            # avg_val_loss += val_loss / total_batch    # validation 평균 loss
-            # prev_val_loss = val_loss
-
-        print('Epoch: {:02d}/{} | training loss: {:.6f} | validation loss: {:.6f}'
-              .format(epoch+1, n_epoch, epoch_train_loss_avg, epoch_val_loss_avg))
-
-
-    if run != None:
+    if run is not None:
         run.finish()
-
-    return
