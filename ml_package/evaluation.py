@@ -1,11 +1,12 @@
-from ml_package.metric import Metrics
-
-from torch import load, max, no_grad
-import torch.cuda
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
+from torch import load, max, no_grad
+import torch.cuda
+
+# from ml_package.metric import Metrics
+
 
 
 """  GPU 존재 확인 """
@@ -104,7 +105,7 @@ def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) 
     print(classification_report(y_true, y_pred, target_names=classes))
 
 
-def eval_confusion_matrix_multiclass(model, model_status_PATH, test_loader, classes, time) -> None:
+def eval_confusion_matrix_multiclass(model, model_status_PATH, test_loader, classes, time, path) -> None:
     """
     다중 클래스에 최적화된 혼동 행렬 시각화 및 평가 지표 출력
     """
@@ -160,7 +161,7 @@ def eval_confusion_matrix_multiclass(model, model_status_PATH, test_loader, clas
     plt.yticks(rotation=0)
     
     plt.tight_layout()
-    plt.savefig(f"confusion_matrix_{time}.png", dpi=150)
+    plt.savefig(f"{path}{time}/confusion_matrix_{time}.png", dpi=150)
     plt.show()
     plt.close()
 
@@ -283,7 +284,7 @@ def visualize_classification_results(model, model_status_PATH, test_loader, clas
     return accuracies
 
 
-def visualize_mnist_results(model, model_status_PATH, test_loader, time, num_samples=3):
+def visualize_mnist_results(model, model_status_PATH, test_loader, time, path, num_samples=3):
     """
     MNIST(0-9) 분류 결과를 숫자별로 시각화합니다.
     각 숫자(Row)에 대해 성공 사례와 오답 사례를 보여줍니다.
@@ -373,17 +374,13 @@ def visualize_mnist_results(model, model_status_PATH, test_loader, time, num_sam
     fig.text(0.7, 0.98, "Incorrect Samples (Wrong Prediction)", fontsize=16, color='red', fontweight='bold')
 
     plt.tight_layout()
-    plt.savefig(f'mnist_results_{time}.png', bbox_inches='tight', dpi=150)
+    plt.savefig(f'{path}{time}/mnist_results_{time}.png', bbox_inches='tight', dpi=150)
     plt.show()
 
     return class_correct, class_total
 
 
-import torch
-import matplotlib.pyplot as plt
-import numpy as np
-
-def visualize_cifar10_results(model, model_status_PATH, test_loader, time, num_samples=3):
+def visualize_cifar10_results(model, model_status_PATH, test_loader, time, path, num_samples=3):
     """
     CIFAR-10 분류 결과를 클래스별로 시각화합니다.
     성공 사례는 정상 컬러로, 오답 사례는 시각적 구분을 위해 원본 컬러를 유지하되 타이틀로 강조합니다.
@@ -479,7 +476,70 @@ def visualize_cifar10_results(model, model_status_PATH, test_loader, time, num_s
     fig.text(0.75, 0.99, "Incorrect Samples (Wrong Prediction)", fontsize=15, color='red', fontweight='bold', ha='center')
 
     plt.tight_layout()
-    plt.savefig(f'cifar10_analysis_{time}.png', bbox_inches='tight', dpi=150)
+    plt.savefig(f'{path}{time}/cifar10_analysis_{time}.png', bbox_inches='tight', dpi=150)
     plt.show()
 
     return class_correct, class_total
+
+
+def calculate_topk_error(model, model_status_PATH, loader, device, topk=(1, 5)):
+    """
+    전체 데이터셋에 대해 Top-1 및 Top-5 Error Rate를 계산합니다.
+    
+    Args:
+        model: 평가할 모델
+        loader: 테스트 데이터 로더
+        device: 'cuda' 또는 'cpu'
+        topk: 산출할 k 값의 튜플 (기본값: 1순위와 5순위)
+        
+    Returns:
+        dict: { 'Top-1 Error': %, 'Top-5 Error': % }
+    """
+    model.load_state_dict(torch.load(model_status_PATH, map_location=DEVICE))
+    model.eval()
+    max_k = max(torch.tensor(topk))
+    total_samples = 0
+    topk_correct = {k: 0 for k in topk}
+
+    with torch.no_grad():
+        for imgs, labels in loader:
+            imgs, labels = imgs.to(device), labels.to(device)
+            batch_size = labels.size(0)
+            total_samples += batch_size
+
+            # 1. 모델 예측값(Logits) 획득
+            outputs = model(imgs)
+
+            # 2. 상위 max_k개의 인덱스 추출 (값, 인덱스)
+            _, pred = outputs.topk(max_k, 1, True, True)
+            pred = pred.t() # (max_k, batch_size)로 변환
+
+            # 3. 정답 레이블과 비교 (정답을 확장하여 비교 행렬 생성)
+            # labels.view(1, -1) -> (1, batch_size)
+            # expand_as(pred) -> (max_k, batch_size)
+            correct = pred.eq(labels.view(1, -1).expand_as(pred))
+
+            # 4. 각 k값에 대해 맞춘 개수 합산
+            for k in topk:
+                # 상위 k개 행 중에서 하나라도 True가 있으면 정답으로 처리
+                correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
+                topk_correct[k] += correct_k.item()
+
+    # 5. 최종 에러율 계산 (100 - Accuracy)
+    error_rates = {}
+    for k in topk:
+        accuracy = (topk_correct[k] / total_samples) * 100
+        error_rates[f'Top-{k} Error'] = 100.0 - accuracy
+
+    return error_rates
+
+
+def print_detailed_evaluation(model, model_status_PATH, test_loader, device):
+    errors = calculate_topk_error(model, model_status_PATH, test_loader, device)
+    
+    print("\n" + "="*30)
+    print(" [ Model Error Rate Analysis ]")
+    print("-"*30)
+    for name, value in errors.items():
+        print(f"{name:12s} : {value:>6.2f} %")
+    print("="*30 + "\n")
