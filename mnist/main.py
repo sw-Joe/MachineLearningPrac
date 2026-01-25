@@ -72,6 +72,10 @@ def main(cfg: DictConfig):
 
 
     """ 커스텀 데이터셋 객체 선언 """
+    # 동적 변수생성 방식(globals(), locals())
+    # for i in (range(10)):
+    #     globals()[f"dataset_{i}"] = CustomDataset(cfg.dataset.dir_train+"{i}/*.png", label=i)
+
     # train, val
     dataset_0 = CustomDataset(cfg.dataset.dir_train+"0/*.png", label=0)
     dataset_1 = CustomDataset(cfg.dataset.dir_train+"1/*.png", label=1)
