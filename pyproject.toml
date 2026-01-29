@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ml_package"
+name = "ml_core"
 version = "0.1.0"
 description = "MachineLearning utils"
 readme = "README.md"
@@ -26,5 +26,5 @@ dependencies = [
 ]
 
 [tool.setuptools.packages.find]
-where = ["ml_package"]
-include = ["ml_package*"]
+where = ["ml_core"]
+include = ["ml_core*"]
