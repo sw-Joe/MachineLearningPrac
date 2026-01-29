@@ -10,11 +10,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
 
 
-from ml_package.model import Model1GrayscaleMulticlass
-from ml_package.preprocessing import CustomDataset
-# from ml_package.split_data import DatasetSplit
-from ml_package.train import train
-from ml_package.evaluation import (evaluation, eval_confusion_matrix_multiclass, visualize_classification_results,
+from ml_core.model import Model1GrayscaleMulticlass
+from ml_core.preprocessing import CustomDataset
+# from ml_core.split_data import DatasetSplit
+from ml_core.train import fit
+from ml_core.evaluation import (evaluation, eval_confusion_matrix_multiclass, visualize_classification_results,
                                    visualize_mnist_results)
 
 
@@ -133,7 +133,7 @@ def main(cfg: DictConfig):
 
         """ 학습 """
         # 최적 모델을 저장
-        train(model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW)
+        fit(model, optimizer, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW)
 
 
     """ 모델 테스트 """
