@@ -5,18 +5,37 @@ import seaborn as sns
 from torch import load, max, no_grad
 import torch.cuda
 
-# from ml_package.metric import Metrics
+from metric import MetricTracker
 
 
 
 """  GPU 존재 확인 """
 DEVICE = torch.device("cpu")
 if torch.cuda.is_available():
-    # torch.cuda.manual_seed_all(SEED)    # 난수 제어
     DEVICE = torch.device("cuda")
 
 
 """ 모델 평가 """
+def eval_error(model, model_status_PATH, loader):
+    """기존 복잡했던 함수를 tracker 하나로 대체"""
+    model.load_state_dict(torch.load(model_status_PATH, map_location=DEVICE))
+    model.eval()
+    
+    test_tracker = MetricTracker(topk=(1, 5))
+    
+    with torch.no_grad():
+        for imgs, labels in loader:
+            imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
+            outputs = model(imgs)
+            # Loss는 평가 시 필요 없으므로 0으로 전달하거나 Dummy 처리
+            test_tracker.update(0, outputs, labels)
+
+    print(f"\n[Final Test Analysis]")
+    print(f"Top-1 Error: {test_tracker.get_error_rate(1):.2f}%")
+    print(f"Top-5 Error: {test_tracker.get_error_rate(5):.2f}%")
+    print(f"Total Accuracy: {test_tracker.accuracy*100:.2f}%")
+
+
 def evaluation(model, model_status, test_loader, classes) -> None:
     """
     전체 데이터셋에 대한 평가
@@ -59,6 +78,11 @@ def evaluation(model, model_status, test_loader, classes) -> None:
 
     # 전체 정확도
     print(f'Accuracy of the network on the test_image_set: {100 * correct // total} %')    # floor divi
+
+
+
+
+
 
 
 def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) -> None:
@@ -314,7 +338,7 @@ def visualize_mnist_results(model, model_status_PATH, test_loader, time, path, n
                 pred_idx = predicted[i].item()
                 lbl_str = str(lbl_idx)
                 
-                # 정확도 누적
+                # 정확도 누적그러고 보니 ml_package는 -e로 설치되어 있던 상태였음
                 class_total[lbl_str] += 1
                 if lbl_idx == pred_idx:
                     class_correct[lbl_str] += 1
