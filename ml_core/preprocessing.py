@@ -1,140 +1,83 @@
-from glob import glob
-
 import numpy as np
-import torch.cuda
-
-import cv2 as cv
-# from cv2 import COLOR_BGR2RGB, INTER_LINEAR, cvtColor, imread, resize
+import torch
 from torch.utils.data import Dataset
+from PIL import Image
+from glob import glob
+import torchvision.transforms.functional as F
 
 
 
-# from torchvision import transforms
-"""
-transform = transforms.Compose([
-    # transforms는 기본적으로 PIL 이미지 기반: 변환 필요
-    # transforms.ToPILImage(), # BinaryDataset 결과가 numpy/tensor일 경우 필요
-    # transforms.RandomResizedCrop(128, scale=(0.8, 1.0)),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.ColorJitter(
-        brightness=0.2,
-        contrast=0.2,
-        saturation=0.2,
-        hue=0.1
-    ),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                         std=[0.229, 0.224, 0.225]),
-])
-"""
-
-
-"""  GPU 존재 확인 """
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-""" 데이터셋 전처리"""
-def rgb_matrix_transform(img_list, target_size, idx: int):
+""" Dataset Preprocessing """
+def rgb_matrix_transform(img_path):
     """
-    컬러이미지(RGB)-행렬 변환 
-    비율 유지 리사이즈
+    컬러이미지(RGB)를 읽어 텐서로 변환 (Transform 미사용 시 대비)
     """
-    img = cv.imread(img_list[idx])  # cv: BGR, HEIC(HEIF), AVIF 미지원
-    if img is None:
-        print("can't read img", img_list[idx])
-
-    img = cv.cvtColor(img, cv.COLOR_BGR2RGB)
-
-    if target_size != -1:
-        h, w = img.shape[:2]
-        # 짧은 쪽이든 긴 쪽이든 기준에 맞춰 비율 유지 리사이즈
-        scale = target_size / max(h, w)
-        new_h, new_w = int(h * scale), int(w * scale)
-        
-        # 리사이즈된 결과를 img 변수에 바로 할당
-        img = cv.resize(img, (new_w, new_h), interpolation=cv.INTER_LINEAR)
-
-    # numpy-torch_tensor: (H, W, C) -> (C, H, W)
-    tensor = torch.from_numpy(img).permute(2, 0, 1).float()
-    tensor /= 255.  # Normalization
-    # tensor = tensor.to(device)
-
-    return tensor
+    try:
+        img = Image.open(img_path).convert('RGB')
+        # F.to_tensor는 [0, 255] -> [0, 1.0] 정규화와 (H,W,C)->(C,H,W) 변환을 동시에 수행합니다.
+        return F.to_tensor(img)
+    except Exception as e:
+        print(f"이미지 로드 실패: {img_path} | 에러: {e}")
+        return None
 
 
-def grayscale_matrix_transform(img_list, idx: int):
-    """ 흑백이미지(Grayscale)-행렬 변환 """
-    img_path = img_list[idx]
-
-    # 1. Grayscale 이미지 로드
-    img = cv.imread(img_path, cv.IMREAD_GRAYSCALE)
-    if img is None:
-        raise RuntimeError(f"이미지를 읽을 수 없습니다: {img_list[idx]}")
-
-    # 2. float32 변환 및 정규화 [0,1]
-    img = img.astype(np.float32) / 255.0
-
-    # 3. (H, W) → (1, H, W)
-    img = np.expand_dims(img, axis=0)
-
-    # 4. Tensor 변환
-    tensor = torch.from_numpy(img)
-
-    return tensor
+def grayscale_matrix_transform(img_path):
+    """
+    그레이스케일 이미지를 읽어 텐서로 변환
+    """
+    img = Image.open(img_path).convert('L')
+    return F.to_tensor(img)
 
 
 """ Customized Dataset 정의 """
 class CustomDataset(Dataset): 
-    def __init__(self, dir: str, label: int, target_resize: int = -1) -> None:
-        self.dir: str = dir
+    def __init__(self, dir: str, label: int, transform=None) -> None:
+        # glob(dir)의 dir은 이미 "path/*.JPEG" 형태여야 함
+        self.img_list: list = sorted(glob(dir))
         self.label: int = label
-        self.img_list: list = glob(dir)
-        self.target_size = target_resize
-
+        self.transform = transform
 
     def __len__(self):
-        """데이터셋의 길이 반환"""
         return len(self.img_list)
     
-
     def __getitem__(self, idx: int) -> tuple:
-        """
-        데이터셋에서 특정 1개의 샘플을 가져오는 함수
-        단일 아이템 호출시 처리
-        """
-        tensor = rgb_matrix_transform(self.img_list, self.target_size, idx)
+        img_path = self.img_list[idx]
 
-        return tensor, self.label
+        # 1. PIL로 이미지 열기 (OpenCV 대신)
+        try:
+            img = Image.open(img_path).convert('RGB')
+        except Exception as e:
+            # 깨진 이미지 대비 예외 처리 (재귀적으로 다음 인덱스 호출)
+            return self.__getitem__((idx + 1) % len(self))
+
+        # 2. Transform 적용
+        if self.transform:
+            # PIL 이미지를 넘겨주면 RandomResizedCrop 등이 정상 작동합니다.
+            return self.transform(img), self.label
+        else:
+            # Transform이 없으면 기본 텐서 변환만 수행
+            return F.to_tensor(img), self.label
 
 
 class BinaryDataset(Dataset):
-    def __init__(self, data, labels, transform=None):
-        self.data = data.reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1) # (N, 32, 32, 3)
+    def __init__(self, labels, data, img_h: int=32, img_w: int=32, transform=None):
         self.labels = labels
+        # CIFAR 형태의 평면 데이터를 (N, H, W, C)로 재구성
+        self.data = data.reshape(-1, 3, img_h, img_w).transpose(0, 2, 3, 1) 
         self.transform = transform
-
 
     def __len__(self):
         return len(self.data)
         
-
     def __getitem__(self, idx):
-        img = self.data[idx]
+        # Numpy 배열 추출
+        img_np = self.data[idx]
         label = self.labels[idx]
 
+        # Numpy(uint8)를 PIL Image로 변환 (Transform 호환성 보장)
+        img = Image.fromarray(img_np.astype('uint8'))
+
         if self.transform:
-            img = self.transform(img) # ToTensor, Normalize 등
-            return img, label
+            return self.transform(img), label
         
-        # 2. 기존 CustomDataset의 로직 적용: float32 변환 및 정규화
-        # CIFAR-10 원본은 uint8이므로 연산을 위해 float32로 변환합니다.
-        matrix = img.astype(np.float32)
-
-        # 3. 텐서 변환 및 차원 변경 (H, W, C) -> (C, H, W)
-        # 기존 코드의 .permute(2, 0, 1) 로직과 동일합니다.
-        tensor = torch.from_numpy(matrix).permute(2, 0, 1)
-        
-        # 4. 정규화 (Normalization)
-        tensor /= 255.0
-
-        return tensor, label
+        return F.to_tensor(img), label
