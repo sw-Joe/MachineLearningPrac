@@ -11,35 +11,15 @@ import torch.cuda
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
-
 from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 
-from ResNet.building_block import PlainNet, PlainBlock
-from ml_package.preprocessing import BinaryDataset
-from ml_package.train import train
-from ml_package.evaluation import (evaluation, eval_confusion_matrix_multiclass, 
+from ResNet.building_block import ResNet, BasicBlock
+from ml_core.preprocessing import BinaryDataset
+from ml_core.train import fit
+from ml_core.evaluation import (evaluation, eval_error, eval_confusion_matrix_multiclass, 
                                    visualize_cifar10_results, print_detailed_evaluation)
 
-
-
-def load_cifar10_raw(path, train=True):
-    """ 바이너리 파일을 읽어 numpy 행렬로 반환하는 헬퍼 함수 """
-    data_list = []
-    labels_list = []
-    
-    if train:
-        files = [f'data_batch_{i}' for i in range(1, 6)]
-    else:
-        files = ['test_batch']
-        
-    for file_name in files:
-        with open(f"{path}{file_name}", 'rb') as f:
-            batch = pickle.load(f, encoding='bytes')
-            data_list.append(batch[b'data'])
-            labels_list.extend(batch[b'labels'])
-            
-    return np.concatenate(data_list, axis=0), labels_list
 
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
@@ -65,8 +45,8 @@ def main(cfg: DictConfig):
     print(f"config : {CONFIG}")
 
     # artifact 저장 디렉토리 생성
-    p = Path(f"{cfg.artifact.dir}{NOW}")
-    p.mkdir(exist_ok=True)
+    dir = Path(f"{cfg.artifact.dir}{NOW}")
+    dir.mkdir(exist_ok=True)
 
     # True: 학습&평가 모드, False: 평가
     FLAG = True
@@ -107,11 +87,13 @@ def main(cfg: DictConfig):
         transforms.RandomHorizontalFlip(),
         transforms.RandomCrop(32, padding=4), # 논문 핵심 증강
         transforms.ToTensor(),
+        # ResNet : 채널 단위 정규화 및 표준화
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     ])
 
     test_transform = transforms.Compose([
         transforms.ToTensor(),
+        # ResNet : 채널 단위 정규화 및 표준화
         transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010))
     ])
 
@@ -131,7 +113,7 @@ def main(cfg: DictConfig):
 
 
     """ 모델 인스턴스 생성 """
-    model = PlainNet(PlainBlock, [9, 9, 9], num_classes=10).to(DEVICE)    ### 모델 객체 생성(+ 모델을 GPU로 이동)
+    model = ResNet(BasicBlock, [200, 200, 200], num_classes=10).to(DEVICE)    ### 모델 객체 생성(+ 모델을 GPU로 이동)
 
 
     if FLAG:
@@ -152,7 +134,7 @@ def main(cfg: DictConfig):
 
         """ 학습 """
         # 최적 모델을 저장
-        train(model, optimizer, scheduler, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW, cfg.artifact.dir)
+        fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW, cfg.artifact.dir)
 
 
     """ 모델 테스트 """
@@ -170,8 +152,9 @@ def main(cfg: DictConfig):
 
     # metric
     evaluation(model, path_model_status_saved, testset_loader, classes)    # accuracy, precision, recall
+    eval_error(model, path_model_status_saved, testset_loader)
     print_detailed_evaluation(model, path_model_status_saved, testset_loader, DEVICE)    # top-1, top-5 error rate
-    # visualization img
+    # # visualization img
     eval_confusion_matrix_multiclass(model, path_model_status_saved, testset_loader, classes, NOW, cfg.artifact.dir)
     visualize_cifar10_results(model, path_model_status_saved, testset_loader, NOW, cfg.artifact.dir)
 
