@@ -3,23 +3,23 @@
 # ========================================
 seed: 100
 device: cuda
-model_name: "PlainNet-layer 56"
+model_name: "ResNet stage[3, 4, 6, 3]"
 
 # ========================================
 # 데이터셋 설정
 # ========================================
 dataset:
-  dir: "ResNet/dataset/cifar-10-batches-py/"
-  target_size: 32*32
-  split: [45000, 5000, 10000]
+  dir: dataset/ImageNet100/
+  target_size: 224*224
+  split: [105000, 25000, 5000]
 
 # ========================================
 # 모델 설정
 # ========================================
 model:
-  name: "PlainNet-layer 56"
-  input_size: 32
-  num_classes: 10
+  name: "ResNet-layer 1202"
+  input_size: 224*224
+  num_classes: 100
 
 # ========================================
 # Learning Rate Scheduler 설정
@@ -41,24 +41,25 @@ optimizer:
 # 훈련 설정
 # ========================================
 train:
-  batch_size: 128
+  batch_size: 512
   epochs: 164
-  num_workers: 4    # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  num_workers: 0    # 멀티프로세싱을 통한 데이터 로딩 병렬화
   pin_memory: true    
   # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
   # 전송량에 따라 성능에 영향을 줄 수 있음
 
-# ========================================
+# ========================================o
 # WandB 설정 (통합)
 # ========================================
 wandb:
   enabled: true
-  project: "CIFAR-10_classification"
+  project: "ImageNet100_classification"
   entity: null
   tags:
     - cnn
     - pytorch
     - ResNet
+    - Bottleneck block
   
   log:
     log_freq: 100
@@ -66,8 +67,8 @@ wandb:
     log_gradients: false
   
   metadata:
-    dataset: "CIFAR-10"
-    architecture: "PlainNet layer-56"
+    dataset: "ImageNet100"
+    architecture: "ResNet stage[3, 4, 6, 3]"
     task: "multi-class_classification"
 
 # ========================================
