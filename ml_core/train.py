@@ -10,7 +10,7 @@ from logger import count_time
 
 
 """ GPU 존재 확인 """
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
 
 class EarlyStopping:
@@ -115,8 +115,9 @@ def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader,
         with torch.no_grad():
             for x, y in valset_loader:
                 x_val, y_val = x.to(device).bfloat16(), y.to(device)
-                predicts = model(x_val)
-                loss = criterion(predicts, y_val)
+                with autocast(device_type='cuda', dtype=torch.bfloat16):
+                    predicts = model(x_val)
+                    loss = criterion(predicts, y_val)
 
                 # 트래커에 배치 결과 기록
                 val_tracker.update(loss.item(), predicts, y_val)
@@ -161,6 +162,9 @@ def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader,
         print(f'Epoch: {epoch+1:03d}/{n_epoch} | LR: {current_lr:.6f} | '
               f'Train Loss: {train_tracker.avg_loss:.4f} | Val Loss: {val_tracker.avg_loss:.4f} | '
               f'Val Acc: {val_tracker.accuracy*100:.2f}%')
+
+        # train.py의 에폭 루프 끝부분이나 시작 부분
+        torch.cuda.empty_cache()
 
     if run is not None:
         run.finish()
