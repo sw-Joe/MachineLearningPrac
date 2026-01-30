@@ -1,9 +1,12 @@
+from contextlib import contextmanager
+
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
 from torch import load, max, no_grad
 import torch.cuda
+from torch.amp.autocast_mode import autocast
 
 from metric import MetricTracker
 
@@ -12,77 +15,72 @@ from metric import MetricTracker
 """  GPU 존재 확인 """
 DEVICE = torch.device("cpu")
 if torch.cuda.is_available():
-    DEVICE = torch.device("cuda")
+    DEVICE = torch.device("cuda:2")
 
 
 """ 모델 평가 """
-def eval_error(model, model_status_PATH, loader):
-    """기존 복잡했던 함수를 tracker 하나로 대체"""
-    model.load_state_dict(torch.load(model_status_PATH, map_location=DEVICE))
-    model.eval()
-    
-    test_tracker = MetricTracker(topk=(1, 5))
-    
-    with torch.no_grad():
+class ModelEvaluator:
+    def __init__(self, model, device, classes):
+        """
+       에서 사용되던 공통 자원들을 상태로 관리합니다.
+        """
+        self.model = model
+        self.device = device
+        self.classes = classes
+
+    @contextmanager
+    def _prepare_model(self, model_path):
+        """[컨텍스트 매니저] 가중치 로드 및 평가 모드 전환을 담당합니다."""
+        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        self.model.eval()
+        try:
+            yield self.model
+        finally:
+            torch.cuda.empty_cache()
+
+    @torch.no_grad()
+    def _inference_engine(self, loader):
+        """[추론 엔진] 중복되는 반복문과 AMP 설정을 한 곳에서 관리합니다."""
         for imgs, labels in loader:
-            imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
-            outputs = model(imgs)
-            # Loss는 평가 시 필요 없으므로 0으로 전달하거나 Dummy 처리
-            test_tracker.update(0, outputs, labels)
+            imgs, labels = imgs.to(self.device), labels.to(self.device)
+            with autocast(device_type=self.device.type, 
+                          dtype=torch.float16 if self.device.type == 'cuda' else torch.bfloat16):
+                outputs = self.model(imgs)
+            yield imgs, labels, outputs
 
-    print(f"\n[Final Test Analysis]")
-    print(f"Top-1 Error: {test_tracker.get_error_rate(1):.2f}%")
-    print(f"Top-5 Error: {test_tracker.get_error_rate(5):.2f}%")
-    print(f"Total Accuracy: {test_tracker.accuracy*100:.2f}%")
+    def get_detailed_report(self, model_path, loader, save_path="report.txt"):
+        """
+        지표 산출, 리포트 출력, 파일 저장을 한 번에 수행합니다.
+        """
+        y_true, y_pred = [], []
+        with self._prepare_model(model_path):
+            for _, labels, outputs in self._inference_engine(loader):
+                _, predicted = torch.max(outputs, 1)
+                y_true.extend(labels.cpu().numpy())
+                y_pred.extend(predicted.cpu().numpy())
 
+        # sklearn 리포트 생성
+        report = classification_report(y_true, y_pred, target_names=self.classes, digits=4)
+        
+        # 결과 출력 및 저장
+        print("\n")
+        print(report)
+        with open(save_path, "w", encoding="utf-8") as f:
+            f.write(report)
+        print(f"✅ 리포트가 저장되었습니다: {save_path}")
+        return report
 
-def evaluation(model, model_status, test_loader, classes) -> None:
-    """
-    전체 데이터셋에 대한 평가
-    """
-    model.load_state_dict(load(model_status))
-    model.eval()
-
-    dataiter = iter(test_loader)
-    imgs, labels = next(dataiter)
-
-    correct = 0
-    total = 0
-
-    # 각 분류(class)에 대한 예측값 계산을 위해 준비
-    correct_pred = {classname: 0 for classname in classes}
-    total_pred = {classname: 0 for classname in classes}
-
-    # 학습 중이 아니므로, 출력에 대한 변화도를 계산할 필요 x
-    with no_grad():
-        for data in test_loader:
-            imgs, labels = data
-            imgs = imgs.to(DEVICE)
-            labels = labels.to(DEVICE)
-            # 신경망에 이미지를 통과시켜 출력을 계산
-            outputs = model(imgs)
-            # 가장 높은 값(energy)를 갖는 분류(class)를 정답으로 선택
-            _, predicted = max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
-            
-            for label, prediction in zip(labels, predicted):
-                if label == prediction:
-                    correct_pred[classes[label]] += 1
-                total_pred[classes[label]] += 1
-
-    # 각 분류별 정확도(accuracy)를 출력
-    for classname, correct_count in correct_pred.items():
-        accuracy = 100 * float(correct_count) / total_pred[classname]
-        print(f'Accuracy for class: {classname:5s} is {accuracy:.1f} %')
-
-    # 전체 정확도
-    print(f'Accuracy of the network on the test_image_set: {100 * correct // total} %')    # floor divi
-
-
-
-
-
+    def get_top_k_error(self, model_path, loader, topk=(1, 5)):
+        """Top-K 에러 분석 기능을 수행합니다."""
+        with self._prepare_model(model_path):
+            tracker = MetricTracker(topk=topk) #
+            for _, labels, outputs in self._inference_engine(loader):
+                tracker.update(0, outputs, labels)
+        
+        results = {f"Top-{k} Error": tracker.get_error_rate(k) for k in topk}
+        for k, v in results.items():
+            print(f"{k}: {v:.2f}%")
+        return results
 
 
 def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) -> None:
@@ -97,9 +95,7 @@ def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) 
 
     with no_grad():
         for imgs, labels in test_loader:
-            imgs = imgs.to(DEVICE)
-            labels = labels.to(DEVICE)
-
+            imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
             outputs = model(imgs)
             _, predicted = max(outputs, 1)
 
@@ -125,9 +121,6 @@ def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) 
     plt.savefig(f"confusion_matrix_{time}.png")
     plt.close()
 
-    # classification report
-    print(classification_report(y_true, y_pred, target_names=classes))
-
 
 def eval_confusion_matrix_multiclass(model, model_status_PATH, test_loader, classes, time, path) -> None:
     """
@@ -142,9 +135,7 @@ def eval_confusion_matrix_multiclass(model, model_status_PATH, test_loader, clas
     # 1. 예측 데이터 수집
     with torch.no_grad():
         for imgs, labels in test_loader:
-            imgs = imgs.to(DEVICE)
-            labels = labels.to(DEVICE)
-
+            imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
             outputs = model(imgs)
             _, predicted = torch.max(outputs, 1)
 
@@ -338,7 +329,7 @@ def visualize_mnist_results(model, model_status_PATH, test_loader, time, path, n
                 pred_idx = predicted[i].item()
                 lbl_str = str(lbl_idx)
                 
-                # 정확도 누적그러고 보니 ml_package는 -e로 설치되어 있던 상태였음
+                # 정확도 누적
                 class_total[lbl_str] += 1
                 if lbl_idx == pred_idx:
                     class_correct[lbl_str] += 1
@@ -504,66 +495,3 @@ def visualize_cifar10_results(model, model_status_PATH, test_loader, time, path,
     plt.show()
 
     return class_correct, class_total
-
-
-def calculate_topk_error(model, model_status_PATH, loader, device, topk=(1, 5)):
-    """
-    전체 데이터셋에 대해 Top-1 및 Top-5 Error Rate를 계산합니다.
-    
-    Args:
-        model: 평가할 모델
-        loader: 테스트 데이터 로더
-        device: 'cuda' 또는 'cpu'
-        topk: 산출할 k 값의 튜플 (기본값: 1순위와 5순위)
-        
-    Returns:
-        dict: { 'Top-1 Error': %, 'Top-5 Error': % }
-    """
-    model.load_state_dict(torch.load(model_status_PATH, map_location=DEVICE))
-    model.eval()
-    max_k = max(torch.tensor(topk))
-    total_samples = 0
-    topk_correct = {k: 0 for k in topk}
-
-    with torch.no_grad():
-        for imgs, labels in loader:
-            imgs, labels = imgs.to(device), labels.to(device)
-            batch_size = labels.size(0)
-            total_samples += batch_size
-
-            # 1. 모델 예측값(Logits) 획득
-            outputs = model(imgs)
-
-            # 2. 상위 max_k개의 인덱스 추출 (값, 인덱스)
-            _, pred = outputs.topk(max_k, 1, True, True)
-            pred = pred.t() # (max_k, batch_size)로 변환
-
-            # 3. 정답 레이블과 비교 (정답을 확장하여 비교 행렬 생성)
-            # labels.view(1, -1) -> (1, batch_size)
-            # expand_as(pred) -> (max_k, batch_size)
-            correct = pred.eq(labels.view(1, -1).expand_as(pred))
-
-            # 4. 각 k값에 대해 맞춘 개수 합산
-            for k in topk:
-                # 상위 k개 행 중에서 하나라도 True가 있으면 정답으로 처리
-                correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
-                topk_correct[k] += correct_k.item()
-
-    # 5. 최종 에러율 계산 (100 - Accuracy)
-    error_rates = {}
-    for k in topk:
-        accuracy = (topk_correct[k] / total_samples) * 100
-        error_rates[f'Top-{k} Error'] = 100.0 - accuracy
-
-    return error_rates
-
-
-def print_detailed_evaluation(model, model_status_PATH, test_loader, device):
-    errors = calculate_topk_error(model, model_status_PATH, test_loader, device)
-    
-    print("\n" + "="*30)
-    print(" [ Model Error Rate Analysis ]")
-    print("-"*30)
-    for name, value in errors.items():
-        print(f"{name:12s} : {value:>6.2f} %")
-    print("="*30 + "\n")
