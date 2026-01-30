@@ -20,8 +20,7 @@ from torchvision.transforms import InterpolationMode
 from ResNet.building_block import ResNetImageNet, Bottleneck
 from ml_core.preprocessing import CustomDataset
 from ml_core.train import fit
-from ml_core.evaluation import (evaluation, eval_error, eval_confusion_matrix_multiclass, 
-                                   visualize_cifar10_results, print_detailed_evaluation)
+from ml_core.evaluation import ModelEvaluator
 
 
 
@@ -29,7 +28,7 @@ from ml_core.evaluation import (evaluation, eval_error, eval_confusion_matrix_mu
 def main(cfg: DictConfig):
     # 데이터를 공유 메모리에 쌓지 않도록 강제
     # 성능저하 감수
-    torch.multiprocessing.set_sharing_strategy('file_system')
+    # torch.multiprocessing.set_sharing_strategy('file_system')
 
     """ 로깅을 위한 시간변수 """
     kst_now = datetime.now(ZoneInfo("Asia/Seoul"))
@@ -56,7 +55,7 @@ def main(cfg: DictConfig):
     dir.mkdir(exist_ok=True)
 
     # True: 학습&평가 모드, False: 평가
-    FLAG = True
+    FLAG = False
 
 
     """ Wandb 기록 여부 플래그에 따른 초기화 """
@@ -186,17 +185,19 @@ def main(cfg: DictConfig):
     if FLAG:
         pass
     else:
-        NOW = "00-00-00_00-00-00"    # 테스트에 사용할 모델의 run_name(시간정보)를 명시
+        NOW = "26-01-30_01-25-59"    # 테스트에 사용할 모델의 run_name(시간정보)를 명시
 
-    path_model_status_saved = f"./{cfg.artifact.dir}{NOW}/best_model_{NOW}.pt"
+    best_model = f"./{cfg.artifact.dir}{NOW}/best_model_{NOW}.pt"
     
-    # metric
-    evaluation(model, path_model_status_saved, testset_loader, classes)    # accuracy, precision, recall
-    eval_error(model, path_model_status_saved, testset_loader)
-    print_detailed_evaluation(model, path_model_status_saved, testset_loader, DEVICE)    # top-1, top-5 error rate
-    # # visualization img
-    eval_confusion_matrix_multiclass(model, path_model_status_saved, testset_loader, classes, NOW, cfg.artifact.dir)
-    visualize_cifar10_results(model, path_model_status_saved, testset_loader, NOW, cfg.artifact.dir)
+    ''' metric '''
+    model_eval = ModelEvaluator(model, DEVICE, classes)
+    model_eval.get_detailed_report(best_model, testset_loader)
+    model_eval.get_top_k_error(best_model, testset_loader)
+
+
+    ''' visualization '''
+    # eval_confusion_matrix_multiclass(model, path_model_status_saved, testset_loader, classes, NOW, cfg.artifact.dir)
+    # visualize_cifar10_results(model, path_model_status_saved, testset_loader, NOW, cfg.artifact.dir)
 
 
 if __name__ == "__main__":
