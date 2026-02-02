@@ -1,9 +1,5 @@
 from datetime import datetime
-from glob import glob
-import json
-import numpy as np
 from pathlib import Path
-import pickle
 from zoneinfo import ZoneInfo
 
 import hydra
@@ -13,18 +9,18 @@ import torch.cuda
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import MultiStepLR
-from torch.utils.data import DataLoader, random_split, ConcatDataset
+from torch.utils.data import DataLoader, random_split
 from torchvision import transforms
 from torchvision.transforms import InterpolationMode
 
 from ResNet.building_block import ResNetImageNet, Bottleneck
-from ml_core.preprocessing import CustomDataset
+from ResNet.read_dataset import ImageNet100
 from ml_core.train import fit
 from ml_core.evaluation import ModelEvaluator
 
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
+@hydra.main(version_base=None, config_path="conf", config_name="bottleneck")
 def main(cfg: DictConfig):
     # 데이터를 공유 메모리에 쌓지 않도록 강제
     # 성능저하 감수
@@ -50,13 +46,8 @@ def main(cfg: DictConfig):
     print(f"project : {PROJECT}")
     print(f"config : {CONFIG}")
 
-    # artifact 저장 디렉토리 생성
-    dir = Path(f"{cfg.artifact.dir}{NOW}")
-    dir.mkdir(exist_ok=True)
-
     # True: 학습&평가 모드, False: 평가
-    FLAG = False
-
+    FLAG = True
 
     """ Wandb 기록 여부 플래그에 따른 초기화 """
     if cfg.wandb.enabled:
@@ -67,6 +58,10 @@ def main(cfg: DictConfig):
             config = CONFIG,
             tags = cfg.wandb.tags
         )
+
+        # artifact 저장 디렉토리 생성
+        dir = Path(f"{cfg.artifact.dir}{NOW}")
+        dir.mkdir(exist_ok=True)
     else:
         RUN = None
 
@@ -101,66 +96,63 @@ def main(cfg: DictConfig):
         # 짧은 축을 256으로 리사이즈 (종횡비 유지)
         transforms.Resize(256, interpolation=InterpolationMode.BILINEAR),
         # 중앙에서 224x224 크롭
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        # transforms.CenterCrop(224),
+        transforms.TenCrop(224),    # 10장의 PIL 이미지객체 반환
+        # 10개의 크롭 이미지 각각에 대해 변환 적용 후 스택(Stack)
+            transforms.Lambda(lambda crops: torch.stack([
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])(
+                    transforms.ToTensor()(crop)
+                ) for crop in crops
+            ]))
+        # transforms.ToTensor(),
+        # transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
 
     """ 커스텀 데이터셋 객체 선언 """
-    custom_datasets_train: list = []
-    custom_datasets_test: list = []
-    train_dirs: list = []
-    ext: str = "/*.JPEG"
+    dataset = ImageNet100(cfg, train_transform, val_transform)
 
-    for num in range(1, 5):
-        train_dirs.append(f"train.X{num}")
+    test_set = dataset.get_testsets()
+    classes = dataset.get_classes()
 
-    file = open(cfg.dataset.dir+"Labels.json", "r")
-    label_json = json.load(file)
-
-    # 문자열 클래스명을 정수 인덱스로 바꾸는 사전(Dictionary)
-    # classes = label_json.values()
-    classes = sorted(list(set(label_json.values())))
-    label_to_idx = {name: i for i, name in enumerate(classes)}
-
-    for i in train_dirs:
-        for j in glob(cfg.dataset.dir + i + "/*"):    # dataset root dir/train_X{num}
-            label = label_json[j[-9:]]
-            int_label = label_to_idx[label]
-            custom_datasets_train.append(CustomDataset(j+ext, int_label, train_transform))
-    full_train_dataset = ConcatDataset(custom_datasets_train)
-
-    val_list = glob(cfg.dataset.dir + "val.X" + "/*")
-    for i in val_list:
-        label = label_json[i[-9:]]
-        int_label = label_to_idx[label]
-        custom_datasets_test.append(CustomDataset(i+ext, int_label, val_transform))
-    test_set = ConcatDataset(custom_datasets_test)
-
-    print(len(full_train_dataset), len(test_set))
-
-    file.close()
 
     """ customPackage.split을 이용한 데이터 분할(train, validation) """
     if FLAG:
-        # 130000
-        # test 5000
-        train_set, val_set = random_split(full_train_dataset, [105000, 25000], generator=g)
+        train_dataset = dataset.get_trainsets()
+        # train(train + validation) 130000
+        # test                        5000
+        train_set, val_set = random_split(train_dataset, [105000, 25000], generator=g)
 
 
     ##########
 
 
     """ 모델 인스턴스 생성 """
-    model = ResNetImageNet(Bottleneck, [3, 4, 6, 3], num_classes=100).to(DEVICE)    ### 모델 객체 생성(+ 모델을 GPU로 이동)
+    model = ResNetImageNet(Bottleneck, [3, 4, 6, 3], num_classes=100)    ### 모델 객체 생성(+ 모델을 GPU로 이동)
+    # model = ResNetImageNet(Bottleneck, [3, 4, 23, 3], num_classes=100)
+        ### 모델 객체 생성(+ 모델을 GPU로 이동)
+
+    if torch.cuda.device_count() > 1:
+        # cuda:2 - master GPU, cuda:3 - sub
+        model = nn.DataParallel(model, device_ids=[2, 3]).to(DEVICE)
+        # model = nn.parallel.DistributedDataParallel(model, device_ids=[0, 1, 2, 3]).to(DEVICE)
 
 
     if FLAG:
         """ 옵티마이저, 비용함수 인스턴스 생성 """
         optimizer = optim.SGD(model.parameters(), lr=cfg.optimizer.lr, 
                               momentum=cfg.optimizer.momentum, weight_decay=cfg.optimizer.w_decay)    # 옵티마이저 생성: Stochastic Gradient Descent
+
         scheduler = MultiStepLR(optimizer, milestones=cfg.scheduler.milestones, gamma=cfg.scheduler.gamma) # 에폭 기준 예시
+
+        # # 1. 웜업 스케줄러 (400 step까지 0.1배 적용)
+        # warmup_sch = LambdaLR(optimizer, lr_lambda=lambda step: 0.1 if step < 400 else 1.0)
+        # # 2. 메인 스케줄러 (30, 60, 90 에폭에서 감쇠)
+        # main_sch = MultiStepLR(optimizer, milestones=cfg.scheduler.milestones, gamma=cfg.scheduler.gamma)
+
+        # # 3. 통합 (400 step 지점에서 메인으로 전환)
+        # scheduler = SequentialLR(optimizer, schedulers=[warmup_sch, main_sch], milestones=[400])
+
         criterion = nn.CrossEntropyLoss()    # 비용(손실)함수 객체 생성
 
 
@@ -174,7 +166,7 @@ def main(cfg: DictConfig):
 
         """ 학습 """
         # 최적 모델을 저장
-        fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW, cfg.artifact.dir)
+        fit(DEVICE, model, optimizer, scheduler, criterion, trainset_loader, valset_loader, cfg.train.epochs, RUN, NOW, cfg.artifact.dir)
 
 
     """ 모델 테스트 """
@@ -185,14 +177,15 @@ def main(cfg: DictConfig):
     if FLAG:
         pass
     else:
-        NOW = "26-01-30_01-25-59"    # 테스트에 사용할 모델의 run_name(시간정보)를 명시
+        NOW = "26-00-00_00-00-00"    # 테스트에 사용할 모델의 run_name(시간정보)를 명시
 
     best_model = f"./{cfg.artifact.dir}{NOW}/best_model_{NOW}.pt"
     
     ''' metric '''
-    model_eval = ModelEvaluator(model, DEVICE, classes)
-    model_eval.get_detailed_report(best_model, testset_loader)
-    model_eval.get_top_k_error(best_model, testset_loader)
+    model_eval = ModelEvaluator(model, DEVICE, classes, NOW)
+    model_eval.add_detailed_report(best_model, testset_loader)
+    model_eval.add_top_k_error(best_model, testset_loader)
+    model_eval.export(f"./{cfg.artifact.dir}{NOW}/")
 
 
     ''' visualization '''
