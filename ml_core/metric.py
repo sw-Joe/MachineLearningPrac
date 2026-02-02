@@ -12,27 +12,21 @@ class MetricsLagacy:
         self.test = test
         self.predict = predict
 
-
     # 평가지표를 패키지가 아닌 직접 계산하도록 다시 작성
     def _accuracy(self):
         return accuracy_score(self.test, self.predict)
-    
 
     def _precision(self):
         return precision_score(self.test, self.predict)
-    
 
     def _recall(self):
         return recall_score(self.test, self.predict)
-
         
     def _f1(self):
         return f1_score(self.test, self.predict)
 
-
     def _roc_auc(self):
         return roc_auc_score(self.test, self.predict)
-    
 
     def _confusion_matrix(self) -> None:
         sns.heatmap(confusion_matrix(self.test, self.predict), annot=True, fmt='d')
