@@ -2,7 +2,7 @@
 # 프로젝트 설정
 # ========================================
 seed: 100
-device: cuda
+device: cuda:2
 model_name: "ResNet stage[3, 4, 6, 3]"
 
 # ========================================
@@ -17,7 +17,7 @@ dataset:
 # 모델 설정
 # ========================================
 model:
-  name: "ResNet-layer 1202"
+  name: "ResNet stage[3, 4, 6, 3]"
   input_size: 224*224
   num_classes: 100
 
@@ -25,7 +25,7 @@ model:
 # Learning Rate Scheduler 설정
 # ========================================
 scheduler:
-  milestones: [82, 123]
+  milestones: [30, 60, 90]
   gamma: 0.1
 
 # ========================================
@@ -41,9 +41,9 @@ optimizer:
 # 훈련 설정
 # ========================================
 train:
-  batch_size: 512
-  epochs: 164
-  num_workers: 0    # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  batch_size: 256
+  epochs: 150
+  num_workers: 16    # 멀티프로세싱을 통한 데이터 로딩 병렬화
   pin_memory: true    
   # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
   # 전송량에 따라 성능에 영향을 줄 수 있음
