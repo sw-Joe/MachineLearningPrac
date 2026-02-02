@@ -53,10 +53,10 @@ class CustomDataset(Dataset):
         # 2. Transform 적용
         if self.transform:
             # PIL 이미지를 넘겨주면 RandomResizedCrop 등이 정상 작동합니다.
-            return self.transform(img), self.label
+            return self.transform(img), self.label, img_path
         else:
             # Transform이 없으면 기본 텐서 변환만 수행
-            return F.to_tensor(img), self.label
+            return F.to_tensor(img), self.label, img_path
 
 
 class BinaryDataset(Dataset):
