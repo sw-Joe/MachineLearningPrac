@@ -1,3 +1,5 @@
+import json
+
 from torch import no_grad, bfloat16
 import torch.cuda
 from torch.amp.autocast_mode import autocast
@@ -7,10 +9,6 @@ import wandb
 from metric import MetricTracker
 from logger import count_time
 
-
-
-""" GPU 존재 확인 """
-device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 
 
 class EarlyStopping:
@@ -38,7 +36,7 @@ class EarlyStopping:
 """ 기본 훈련 루프 """
 ''' (1)예측 → (2)손실 계산 → (3)그래디언트 초기화 → (4)역전파 → (5)가중치 업데이트해보기 '''
 @count_time
-def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader, 
+def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_loader, 
           n_epoch: int, run, time, path) -> None:
     """
     @param: model, optimizer, criterion, trainset_loader, n_epoch: int\n
@@ -47,7 +45,11 @@ def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader,
     #     patience=10,
     #     min_delta=1e-4
     # )
+
     best_val_loss = float("inf")
+
+    misclassified_samples = []
+
     # Autocast & Gradscaler
     # try:
     #     scaler = GradScaler(device="cuda")
@@ -74,13 +76,7 @@ def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader,
         ''' [Train Loop] '''
         model.train()
         # 학습 초기 낮은 학습률을 사용한 Gradient Exploding 제어
-        for x, y in trainset_loader:
-            if iter < 400:
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = 0.01
-            elif iter == 400:
-                for param_group in optimizer.param_groups:
-                    param_group['lr'] = 0.1 # 400 iter 이후 원래 LR 0.1 복구
+        for x, y, _ in trainset_loader:
 
             # 이미지 행렬을 선형 모델에 넣기 위한 형태인 1차원 벡터로 펼침(flatten)
             x_train, y_train = x.to(device).bfloat16(), y.to(device)
@@ -96,6 +92,10 @@ def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader,
             optimizer.step()                        # 5. weight 업데이트
 
             # 트래커에 배치 결과 기록
+            # CPU-GPU 통신 오버헤드 줄이기 위해 tensor.item(), tensor.tolist() 사용 줄이기 - Synchronization
+            # item()으로 선언된 부분을 다른 방법으로 대체
+            # 또는 item()으로 하되 또 다른 방법
+
             train_tracker.update(loss.item(), predicts, y_train)
 
             if run is not None:
@@ -112,13 +112,26 @@ def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader,
 
         ''' [Validation Loop] '''
         model.eval()
+        epoch_misclassified = []
+
         with torch.no_grad():
-            for x, y in valset_loader:
+            for x, y, paths in valset_loader:
                 x_val, y_val = x.to(device).bfloat16(), y.to(device)
                 with autocast(device_type='cuda', dtype=torch.bfloat16):
                     predicts = model(x_val)
                     loss = criterion(predicts, y_val)
 
+                preds = predicts.argmax(dim=1)
+                wrong_indices = (preds != y_val).nonzero(as_tuple=True)[0]
+
+                for idx in wrong_indices:
+                    epoch_misclassified.append({
+                        "file_path": paths[idx],
+                        "true_label": y_val[idx].item(),
+                        "pred_label": preds[idx].item(),
+                        "epoch": epoch + 1
+                    })
+                
                 # 트래커에 배치 결과 기록
                 val_tracker.update(loss.item(), predicts, y_val)
 
@@ -150,8 +163,22 @@ def fit(model, optimizer, scheduler, criterion, trainset_loader, valset_loader,
         # 모델 저장 로직
         if val_tracker.avg_loss < best_val_loss:
             best_val_loss = val_tracker.avg_loss
+            misclassified_samples = epoch_misclassified
+
+            ### 개발 예정 ###
+            # checkpoint = {
+            #     'epoch': epoch,
+            #     'model_state_dict': model.state_dict(),
+            #     'optimizer_state_dict': optimizer.state_dict(),
+            #     'val_loss': val_loss,
+            # }
+
             torch.save(model.state_dict(), f"{path}{time}/best_model_{time}.pt")
             print(f"--- Model saved at epoch {epoch+1} (Loss: {best_val_loss:.6f}) ---")
+
+            # 오분류 결과 저장
+            with open(f"{path}{time}/misclassified.json", "w", encoding="utf-8") as f:
+                json.dump(misclassified_samples, f, indent=4)
         
         # 스케줄러 업데이트
         if scheduler is not None:
