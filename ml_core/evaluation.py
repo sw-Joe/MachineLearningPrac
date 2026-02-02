@@ -12,21 +12,18 @@ from metric import MetricTracker
 
 
 
-"""  GPU 존재 확인 """
-DEVICE = torch.device("cpu")
-if torch.cuda.is_available():
-    DEVICE = torch.device("cuda:2")
-
-
 """ 모델 평가 """
 class ModelEvaluator:
-    def __init__(self, model, device, classes):
+    def __init__(self, model, device, classes, time):
         """
        에서 사용되던 공통 자원들을 상태로 관리합니다.
         """
         self.model = model
         self.device = device
         self.classes = classes
+        self.time = time
+        self.metrics_history = []
+
 
     @contextmanager
     def _prepare_model(self, model_path):
@@ -38,20 +35,53 @@ class ModelEvaluator:
         finally:
             torch.cuda.empty_cache()
 
+
     @torch.no_grad()
     def _inference_engine(self, loader):
         """[추론 엔진] 중복되는 반복문과 AMP 설정을 한 곳에서 관리합니다."""
-        for imgs, labels in loader:
+        for imgs, labels, _ in loader:
             imgs, labels = imgs.to(self.device), labels.to(self.device)
+
+            # TenCrop 대응 로직
+            if len(imgs.shape) == 5:
+                bs, n_crops, c, h, w = imgs.size()
+                imgs = imgs.view(-1, c, h, w)
+                
+            imgs, labels = imgs.to(self.device), labels.to(self.device)
+            
             with autocast(device_type=self.device.type, 
                           dtype=torch.float16 if self.device.type == 'cuda' else torch.bfloat16):
                 outputs = self.model(imgs)
+            
+            # TenCrop 결과 평균화
+            if len(outputs) != len(labels):
+                outputs = outputs.view(bs, n_crops, -1).mean(1)
+
             yield imgs, labels, outputs
 
-    def get_detailed_report(self, model_path, loader, save_path="report.txt"):
-        """
-        지표 산출, 리포트 출력, 파일 저장을 한 번에 수행합니다.
-        """
+
+    def add_top_k_error(self, model_path, loader, tag="Test"):
+            """Top-K 지표를 계산하고 self.metrics_history에 추가합니다."""
+            with self._prepare_model(model_path):
+                tracker = MetricTracker(topk=(1, 5)) #
+                for _, labels, outputs in self._inference_engine(loader):
+                    tracker.update(0, outputs, labels)
+            
+            # 지표 데이터를 딕셔너리 형태로 리스트에 추가
+            result = {
+                "type": "Top-K Error",
+                "tag": tag,
+                "timestamp": self.time,
+                "top1_error": tracker.get_error_rate(1),
+                "top5_error": tracker.get_error_rate(5),
+                "accuracy": tracker.accuracy * 100
+            }
+            self.metrics_history.append(result)
+            print(f"✅ {tag} 지표가 히스토리에 추가되었습니다.")
+
+
+    def add_detailed_report(self, model_path, loader, tag="Detailed"):
+        """상세 분류 리포트를 생성하고 self.metrics_history에 추가합니다."""
         y_true, y_pred = [], []
         with self._prepare_model(model_path):
             for _, labels, outputs in self._inference_engine(loader):
@@ -59,28 +89,44 @@ class ModelEvaluator:
                 y_true.extend(labels.cpu().numpy())
                 y_pred.extend(predicted.cpu().numpy())
 
-        # sklearn 리포트 생성
-        report = classification_report(y_true, y_pred, target_names=self.classes, digits=4)
+        # sklearn 리포트 생성 및 저장
+        report_dict = classification_report(y_true, y_pred, target_names=self.classes, digits=3, output_dict=True)
+        report_str = classification_report(y_true, y_pred, target_names=self.classes, digits=3)
         
-        # 결과 출력 및 저장
-        print("\n")
-        print(report)
-        with open(save_path, "w", encoding="utf-8") as f:
-            f.write(report)
-        print(f"✅ 리포트가 저장되었습니다: {save_path}")
-        return report
+        result = {
+            "type": "Classification Report",
+            "tag": tag,
+            "timestamp": self.time,
+            "raw_str": report_str,
+            "macro_f1": report_dict['macro avg']['f1-score']
+        }
+        self.metrics_history.append(result)
+        print(f"✅ {tag} 상세 리포트가 히스토리에 추가되었습니다.")
 
-    def get_top_k_error(self, model_path, loader, topk=(1, 5)):
-        """Top-K 에러 분석 기능을 수행합니다."""
-        with self._prepare_model(model_path):
-            tracker = MetricTracker(topk=topk) #
-            for _, labels, outputs in self._inference_engine(loader):
-                tracker.update(0, outputs, labels)
-        
-        results = {f"Top-{k} Error": tracker.get_error_rate(k) for k in topk}
-        for k, v in results.items():
-            print(f"{k}: {v:.2f}%")
-        return results
+    
+    def export(self, file_path):
+            """self.metrics_history에 쌓인 모든 지표를 파일로 추출합니다."""
+            if not self.metrics_history:
+                print("❌ No metric history Found.")
+                return
+
+            with open(file_path+"eval_summary.txt", "w", encoding="utf-8") as f:
+                f.write("="*60 + "\n")
+                f.write(f" EVALUATION REPORT ({self.time})\n")
+                f.write("="*60 + "\n\n")
+
+                for i, m in enumerate(self.metrics_history, 1):
+                    f.write(f"[{i}] {m['type']} - Tag: {m['tag']} ({m['timestamp']})\n")
+                    if m['type'] == "Top-K Error":
+                        f.write(f" > Top-1 Error: {m['top1_error']:.2f}%\n")
+                        f.write(f" > Top-5 Error: {m['top5_error']:.2f}%\n")
+                        f.write(f" > Accuracy: {m['accuracy']:.2f}%\n")
+                    elif m['type'] == "Classification Report":
+                        f.write(f" > Macro F1-Score: {m['macro_f1']:.4f}\n")
+                        f.write(f" > Details:\n{m['raw_str']}\n")
+                    f.write("-" * 40 + "\n")
+            
+            print(f"\n✅✅ summary exported to : {file_path+"eval_summary.txt"}")
 
 
 def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) -> None:
