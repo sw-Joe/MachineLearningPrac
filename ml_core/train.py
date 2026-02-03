@@ -122,6 +122,11 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
                     loss = criterion(predicts, y_val)
 
                 preds = predicts.argmax(dim=1)
+
+                # 추가: 기존 predicts 변수에서 바로 확률값 추출
+                # Logit을 Softmax로 변환하여 0~1 사이의 확신도로 만듭니다.
+                probs = predicts.softmax(dim=1)
+
                 wrong_indices = (preds != y_val).nonzero(as_tuple=True)[0]
 
                 for idx in wrong_indices:
@@ -129,6 +134,8 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
                         "file_path": paths[idx],
                         "true_label": y_val[idx].item(),
                         "pred_label": preds[idx].item(),
+                        # 3. 계산된 probs에서 예측한 클래스의 확률값만 추출하여 추가
+                        "confidence": probs[idx][preds[idx]].item(),
                         "epoch": epoch + 1
                     })
                 
