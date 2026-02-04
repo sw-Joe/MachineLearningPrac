@@ -3,6 +3,8 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
 import torch
 import torch.nn.functional as F
 from torch.amp.autocast_mode import autocast
