@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
                              f1_score, confusion_matrix, roc_auc_score)
+import torch
+import torch.distributed as dist
 
 
 class MetricsLagacy:
@@ -13,22 +15,22 @@ class MetricsLagacy:
         self.predict = predict
 
     # 평가지표를 패키지가 아닌 직접 계산하도록 다시 작성
-    def _accuracy(self):
+    def accuracy(self):
         return accuracy_score(self.test, self.predict)
 
-    def _precision(self):
+    def precision(self):
         return precision_score(self.test, self.predict)
 
-    def _recall(self):
+    def recall(self):
         return recall_score(self.test, self.predict)
         
-    def _f1(self):
+    def f1(self):
         return f1_score(self.test, self.predict)
 
-    def _roc_auc(self):
+    def roc_auc(self):
         return roc_auc_score(self.test, self.predict)
 
-    def _confusion_matrix(self) -> None:
+    def confusion_matrix(self) -> None:
         sns.heatmap(confusion_matrix(self.test, self.predict), annot=True, fmt='d')
         plt.xlabel('Prediction')
         plt.ylabel('Real')
@@ -41,40 +43,63 @@ class MetricsLagacy:
 @dataclass
 class MetricTracker:
     topk: tuple = (1, 5)
-    loss_sum: float = 0.0
-    total: int = 0
-    correct_counts: dict = field(default_factory=dict)
+    device: torch.device = torch.device("cpu")
+    # 내부 계산용 텐서 필드
+    loss_sum: torch.Tensor = field(init=False)
+    total: torch.Tensor = field(init=False)
+    correct_counts: torch.Tensor = field(init=False)
+    # loss_sum: float = 0.0
+    # total: int = 0
+    # correct_counts: dict = field(default_factory=dict)
 
     def __post_init__(self):
         self.reset()
 
     def reset(self):
-        self.loss_sum, self.total = 0.0, 0
-        self.correct_counts = {k: 0 for k in self.topk}
+        """지표 초기화 및 텐서 생성 (지정된 device 활용)"""
+        self.loss_sum = torch.tensor(0.0, device=self.device)
+        self.total = torch.tensor(0, device=self.device)
+        self.correct_counts = torch.tensor([0.0] * len(self.topk), device=self.device)
+        # self.loss_sum, self.total = 0.0, 0
+        # self.correct_counts = {k: 0 for k in self.topk}
     
     @torch.no_grad()
     def update(self, loss_val: float, predicts, targets):
+        """로컬 데이터를 누적 (이 시점엔 통신하지 않음)"""
         batch_size = targets.size(0)
         self.total += batch_size
-        self.loss_sum += loss_val * batch_size
+        self.loss_sum += loss_val * batch_size    # loss_val은 float 가능
         
         # Top-k 계산 핵심 로직
         max_k = max(self.topk)
         _, pred = predicts.topk(max_k, 1, True, True)
         correct_matrix = pred.t().eq(targets.view(1, -1).expand_as(pred.t()))
 
-        for k in self.topk:
-            self.correct_counts[k] += correct_matrix[:k].reshape(-1).float().sum(0).item()
+        for i, k in enumerate(self.topk):
+            # 수정: k(값)가 아닌 i(인덱스)를 사용
+            # correct_matrix[:k]는 여전히 k(값)를 슬라이싱에 사용,
+            # self.correct_counts[i]는 0번 혹은 1번 인덱스에 접근
+            self.correct_counts[i] += correct_matrix[:k].reshape(-1).float().sum(0)
+
+    def synchronize(self):
+        """[핵심] DDP 환경인 경우 모든 GPU의 누적 지표를 합산 (Block 연산)"""
+        if dist.is_initialized():
+            # 모든 GPU의 값을 SUM하여 동기화
+            dist.all_reduce(self.loss_sum, op=dist.ReduceOp.SUM)
+            dist.all_reduce(self.total, op=dist.ReduceOp.SUM)
+            dist.all_reduce(self.correct_counts, op=dist.ReduceOp.SUM)
 
     @property
     def avg_loss(self):
-        return self.loss_sum / self.total if self.total > 0 else 0.0
+        return (self.loss_sum / self.total).item() if self.total > 0 else 0.0
 
     @property
     def accuracy(self):
         """기존 정확도 지표 유지 (Top-1)"""
-        return self.correct_counts[1] / self.total if self.total > 0 else 0.0
+        return (self.correct_counts[0] / self.total).item() if self.total > 0 else 0.0
 
-    def get_error_rate(self, k=1):
-        """ResNet 논문 재현용 에러율 (%)"""
-        return (1.0 - (self.correct_counts[k] / self.total)) * 100 if self.total > 0 else 0.0
+    def get_error_rate(self, k=1) -> float:
+        if self.total == 0: return 0.0
+        idx = self.topk.index(k)
+        acc = (self.correct_counts[idx] / self.total).item()
+        return (1.0 - acc) * 100
