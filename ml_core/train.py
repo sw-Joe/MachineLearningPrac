@@ -1,7 +1,9 @@
 """
-    CPU-GPU 통신 오버헤드 줄이기 위해 tensor.item(), tensor.tolist() 사용 줄이기 - Synchronization
-    item()으로 선언된 부분을 다른 방법으로 대체
-    또는 item()으로 하되 또 다른 방법
+Synchronization (CPU-GPU 통신 오버헤드 발생) 줄이기 위해 다음 사용을 지양, 대체
+- tensor.item()
+- tensor.tolist()
+
+또는 batching 등의 방법을 사용할 것
 """
 
 import json

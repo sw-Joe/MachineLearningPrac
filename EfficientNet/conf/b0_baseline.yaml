@@ -2,58 +2,61 @@
 # 프로젝트 설정
 # ========================================
 seed: 100
-device: cuda
-model_name: "EfficientNet"
+device: cuda:0    # cuda:2
+model_name: "EfficientNet-B0"
 
 # ========================================
 # 데이터셋 설정
 # ========================================
 dataset:
-  dir: "dataset/ImageNet100"
-  target_size: 32*32
-  split: [45000, 5000, 10000]
+  dir: "dataset/ImageNet100/"
+  target_size: 224*224
+  split: [105000, 25000, 5000]
 
 # ========================================
 # 모델 설정
 # ========================================
 model:
-  name: "EfficientNet"
-  input_size: 32
-  num_classes: 10
+  name: "EfficientNet-B0"
+  input_size: 224*224
+  num_classes: 100
 
 # ========================================
 # Learning Rate Scheduler 설정
 # ========================================
 scheduler:
-  milestones: [82, 123]
-  gamma: 0.1
+  type: "stepLR"
+  step_size: 2
+  gamma: 0.97
 
 # ========================================
 # 옵티마이저 설정
 # ========================================
 optimizer:
-  name: sgd
-  lr: 0.1
+  name: RMSprop
+  lr: "dynamic"
   momentum: 0.9
-  w_decay: 1e-4
+  w_decay: 1e-5
 
 # ========================================
 # 훈련 설정
 # ========================================
 train:
-  batch_size: 512
-  epochs: 164
-  num_workers: 4    # 멀티프로세싱을 통한 데이터 로딩 병렬화
-  pin_memory: true    
+  batch_size: 1024    # EfficientNet-B0, ImageNet100, RTX 4090 24GB * 2 기준 최대 
+  epochs: 160
+  num_workers: 8    # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  pin_memory: true
   # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
   # 전송량에 따라 성능에 영향을 줄 수 있음
+  persistent_worker: true
+  prefetch_factor: 4
 
 # ========================================
 # WandB 설정 (통합)
 # ========================================
 wandb:
   enabled: true
-  project: "CIFAR-10_classification"
+  project: "ImageNet100_classification"
   entity: null
   tags:
     - cnn
@@ -66,8 +69,8 @@ wandb:
     log_gradients: false
   
   metadata:
-    dataset: "CIFAR-10"
-    architecture: "EfficientNet"
+    dataset: "ImageNet100"
+    architecture: "EfficientNet-B0"
     task: "multi-class_classification"
 
 # ========================================
