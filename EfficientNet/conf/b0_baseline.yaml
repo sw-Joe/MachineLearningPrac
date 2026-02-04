@@ -4,6 +4,8 @@
 seed: 100
 device: cuda:0    # cuda:2
 model_name: "EfficientNet-B0"
+# train_n_eval | eval_only
+run: train_n_eval
 
 # ========================================
 # 데이터셋 설정
