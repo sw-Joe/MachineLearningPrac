@@ -1,9 +1,16 @@
+"""
+    CPU-GPU 통신 오버헤드 줄이기 위해 tensor.item(), tensor.tolist() 사용 줄이기 - Synchronization
+    item()으로 선언된 부분을 다른 방법으로 대체
+    또는 item()으로 하되 또 다른 방법
+"""
+
 import json
 
 from torch import no_grad, bfloat16
 import torch.cuda
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
+import torch.distributed as dist 
 import wandb
 
 from metric import MetricTracker
@@ -19,7 +26,6 @@ class EarlyStopping:
         self.counter = 0
         self.should_stop = False
 
-
     def step(self, current_loss):
         # 유의미한 개선이 있는 경우
         if current_loss < self.best_loss - self.min_delta:
@@ -33,12 +39,11 @@ class EarlyStopping:
             return False
 
 
-""" 기본 훈련 루프 """
-''' (1)예측 → (2)손실 계산 → (3)그래디언트 초기화 → (4)역전파 → (5)가중치 업데이트해보기 '''
 @count_time
 def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_loader, 
-          n_epoch: int, run, time, path) -> None:
+          n_epoch: int, run, time, path, ema) -> None:
     """
+    Model training loop
     @param: model, optimizer, criterion, trainset_loader, n_epoch: int\n
     """
     # early_stopping = EarlyStopping(
@@ -46,27 +51,28 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
     #     min_delta=1e-4
     # )
 
-    best_val_loss = float("inf")
+    iter: int = 0
+    best_val_loss: float = float("inf")
 
     misclassified_samples = []
 
     # Autocast & Gradscaler
-    # try:
-    #     scaler = GradScaler(device="cuda")
-    # except:
-    #     scaler = GradScaler()
+    try:
+        scaler = GradScaler(device=device)
+    except:
+        scaler = GradScaler()
     
     # 트래커 초기화
-    train_tracker = MetricTracker(topk=(1, 5))
-    val_tracker = MetricTracker(topk=(1, 5))
+    train_tracker = MetricTracker(topk=(1, 5), device=device)
+    val_tracker = MetricTracker(topk=(1, 5), device=device)
 
     # Wandb 기록 on/off
-    if run is not None:
+    logging_flag: bool = run is not None and dist.get_rank() == 0
+
+    if logging_flag:
         wandb.define_metric("train/epoch_*", step_metric="epoch")
         wandb.define_metric("validation/epoch_*", step_metric="epoch")
         wandb.define_metric("train/step_*")
-        
-    iter = 0
 
     for epoch in range(n_epoch):
         # 매 Epoch 시작 시 초기화
@@ -75,7 +81,7 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
 
         ''' [Train Loop] '''
         model.train()
-        # 학습 초기 낮은 학습률을 사용한 Gradient Exploding 제어
+
         for x, y, _ in trainset_loader:
 
             # 이미지 행렬을 선형 모델에 넣기 위한 형태인 1차원 벡터로 펼침(flatten)
@@ -89,16 +95,18 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
 
             optimizer.zero_grad()                   # 3. gradient 초기화
             loss.backward()                         # 4. backward propagation
+            
+            # Gradient Clipping: 수치 폭발(NaN) 방지
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             optimizer.step()                        # 5. weight 업데이트
 
-            # 트래커에 배치 결과 기록
-            # CPU-GPU 통신 오버헤드 줄이기 위해 tensor.item(), tensor.tolist() 사용 줄이기 - Synchronization
-            # item()으로 선언된 부분을 다른 방법으로 대체
-            # 또는 item()으로 하되 또 다른 방법
+            ema.update()
 
+            # 트래커에 배치 결과 기록
             train_tracker.update(loss.item(), predicts, y_train)
 
-            if run is not None:
+            if logging_flag:
                 run.log({
                     "train/step_loss": loss.item(),
                     "train/step_acc": (predicts.argmax(1) == y_train).float().mean().item(),
@@ -110,13 +118,20 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
 
             iter += 1
 
+        # Train 루프 종료 후 모든 GPU 결과 통합
+        train_tracker.synchronize()
+
+
         ''' [Validation Loop] '''
         model.eval()
         epoch_misclassified = []
 
         with torch.no_grad():
+            ema.apply_shadow() # 검증 시 EMA 가중치 적용
+
             for x, y, paths in valset_loader:
                 x_val, y_val = x.to(device).bfloat16(), y.to(device)
+
                 with autocast(device_type='cuda', dtype=torch.bfloat16):
                     predicts = model(x_val)
                     loss = criterion(predicts, y_val)
@@ -142,8 +157,11 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
                 # 트래커에 배치 결과 기록
                 val_tracker.update(loss.item(), predicts, y_val)
 
+            # Validation 루프 종료 후 모든 GPU 결과 통합
+            val_tracker.synchronize()
+
         # 에폭 결과 로깅 (Property 사용으로 계산 간소화)
-        if run is not None:
+        if logging_flag:
             run.log({
                 "train/epoch_loss": train_tracker.avg_loss,
                 "train/epoch_acc": train_tracker.accuracy,
@@ -180,25 +198,34 @@ def fit(device, model, optimizer, scheduler, criterion, trainset_loader, valset_
             #     'val_loss': val_loss,
             # }
 
-            torch.save(model.state_dict(), f"{path}{time}/best_model_{time}.pt")
-            print(f"--- Model saved at epoch {epoch+1} (Loss: {best_val_loss:.6f}) ---")
+            if dist.get_rank() == 0:
+                state_dict = model.module.state_dict() if dist.is_initialized() else model.state_dict()
+                torch.save(state_dict, f"{path}{time}/best_model_{time}.pt")
+                # torch.save(model.state_dict(), f"{path}{time}/best_model_{time}.pt")
+                print(f"--- Model saved at epoch {epoch+1} (Loss: {best_val_loss:.6f}) ---")
 
             # 오분류 결과 저장
             with open(f"{path}{time}/misclassified.json", "w", encoding="utf-8") as f:
                 json.dump(misclassified_samples, f, indent=4)
         
+
+        ema.restore()
+
         # 스케줄러 업데이트
         if scheduler is not None:
             scheduler.step()
         
         # 학습률 로깅
         current_lr = optimizer.param_groups[0]['lr']
-        print(f'Epoch: {epoch+1:03d}/{n_epoch} | LR: {current_lr:.6f} | '
-              f'Train Loss: {train_tracker.avg_loss:.4f} | Val Loss: {val_tracker.avg_loss:.4f} | '
-              f'Val Acc: {val_tracker.accuracy*100:.2f}%')
+
+        if dist.get_rank() == 0:
+            print(f'Epoch: {epoch+1:03d}/{n_epoch} | LR: {current_lr:.6f} | '
+                f'Train Loss: {train_tracker.avg_loss:.4f} | Val Loss: {val_tracker.avg_loss:.4f} | '
+                f'Val Acc: {val_tracker.accuracy*100:.2f}%')
 
         # train.py의 에폭 루프 끝부분이나 시작 부분
         torch.cuda.empty_cache()
+
 
     if run is not None:
         run.finish()
