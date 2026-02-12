@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ml_core"
-version = "0.1.0"
+version = "0.2.0"
 description = "MachineLearning utils"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "albumentations>=2.0.8",
     "hydra-core>=1.3.2",
     "kagglehub>=0.3.13",
     "matplotlib>=3.10.8",

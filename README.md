@@ -24,3 +24,16 @@
 
 - DDP로 학습한 모델: 가중치 이름에 module.이라는 접두사가 붙어 있습니다.
 - 단일 GPU로 학습한 모델: 접두사가 없습니다.
+
+
+## 구조
+### Dataset
+#### Division
+- training set
+- validation set
+- test set
+### Model
+### Optimizer
+### Criterion - Loss(Cost) Function
+### Learning Rate Scheduler
+### Logging & Visualization
