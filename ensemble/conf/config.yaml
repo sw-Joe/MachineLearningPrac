@@ -1,0 +1,95 @@
+# ========================================
+# 프로젝트 설정
+# ========================================
+seed: 100
+device: cuda:0    # cuda:2
+model_name: "Ensemble"
+# train_n_eval | eval_only
+mode: train_n_eval
+# mode: eval_only
+
+# ========================================
+# 데이터셋 설정
+# ========================================
+dataset:
+  symbolic_dir: dataset/HAM10k/competition_set/
+  dir: "dataset/HAM10k/"
+  
+  label: ['akiec', 'bcc', 'bkl', 'df', 'mel', 'nv', 'vasc']
+  target_size: 600 * 450
+  split: [8020, 1500]
+
+# ========================================
+# 모델 설정
+# ========================================
+model:
+  name: "Ensemble"
+  input_size: 224*224, 380*380
+  num_classes: 7
+
+# ========================================
+# Learning Rate Scheduler 설정
+# ========================================
+scheduler:
+  type: "stepLR"
+  step_size: 2
+  gamma: 0.97
+
+# ========================================
+# 옵티마이저 설정
+# ========================================
+optimizer:
+  name: AdamW
+  lr: "dynamic"
+  w_decay: 1e-2   # 1e-4
+
+# ========================================
+# 훈련 설정
+# ========================================
+train:
+  batch_size: 32    # , RTX 4090 24GB * 2 기준 최대 
+  epochs: 300
+  num_workers: 8    # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  pin_memory: true
+  # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
+  # 전송량에 따라 성능에 영향을 줄 수 있음
+  persistent_worker: true
+  prefetch_factor: 4
+
+# ========================================
+# WandB 설정 (통합)
+# ========================================
+wandb:
+  enabled: true
+  project: "HAM10000_classification"
+  entity: null
+  tags:
+    - cnn
+    - Vision Transformer
+    - pytorch
+    - ResNet-50
+    - EfficientNet-B4
+    - ViT-B/16
+    - Ensemble
+  
+  log:
+    log_freq: 100
+    log_model: true
+    log_gradients: false
+  
+  metadata:
+    dataset: "HAM10000"
+    architecture: "Ensemble"
+    task: "multi-class_classification"
+
+# ========================================
+# EMA
+# ========================================
+ema:
+  decay: 0.999
+
+# ========================================
+# Artifacts
+# ========================================
+artifact:
+  dir: "ensemble/result/"
