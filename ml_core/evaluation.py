@@ -33,8 +33,16 @@ class BaseEvaluator:
     @contextmanager
     def _prepare_model(self, model_path):
         """[private] 가중치 로드 및 평가 모드 전환을 담당하는 공통 컨텍스트 매니저"""
-        state_dict = torch.load(model_path, map_location=self.device)
-        self.model.load_state_dict(state_dict)
+        state_dict = torch.load(model_path, map_location='cpu')
+        
+        # 2. 현재 모델이 DDP로 감싸져 있는지 확인 후 주입
+        if hasattr(self.model, 'module'):
+            # DDP 모델인 경우 내부 .module에 주입
+            self.model.module.load_state_dict(state_dict)
+        else:
+            # 일반 모델인 경우 바로 주입
+            self.model.load_state_dict(state_dict)
+
         self.model.eval()
         try:
             yield self.model
@@ -124,13 +132,14 @@ class ModelEvaluator(BaseEvaluator):
             report_dict = classification_report(y_true, y_pred, target_names=self.classes, digits=3, output_dict=True)
             report_str = classification_report(y_true, y_pred, target_names=self.classes, digits=3)
         
-        self.metrics_history.append({
-            "type": "Classification Report",
-            "tag": tag,
-            "timestamp": self.time,
-            "raw_str": report_str,
-            "macro_f1": report_dict['macro avg']['f1-score']
-        })
+            self.metrics_history.append({
+                "type": "Classification Report",
+                "tag": tag,
+                "timestamp": self.time,
+                "raw_str": report_str,
+                "macro_f1": report_dict['macro avg']['f1-score']
+            })
+            
         print(f"✅ {tag} 상세 리포트가 누적되었습니다.")
 
 
