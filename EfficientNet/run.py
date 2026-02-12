@@ -5,11 +5,11 @@ import torch
 import torch.nn as nn
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, SequentialLR
-from torch.utils.data import DataLoader, random_split
+from torch.optim.lr_scheduler import LambdaLR, StepLR ,CosineAnnealingLR, SequentialLR
+from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import transforms
-from torchvision.transforms import InterpolationMode
+from torchvision.transforms import InterpolationMode, Lambda
 import hydra
 from omegaconf import DictConfig
 
@@ -17,6 +17,7 @@ from ml_core.setup import EnvSetup
 from ml_core.train_module import Trainer
 from ml_core.ema import EMA
 from ml_core.evaluation import ModelEvaluator
+from ml_core.visualization import Visualize # 시각화 모듈 추가
 from EfficientNet.read_dataset import ImageNet100
 from EfficientNet.block import EfficientNet
 
@@ -38,14 +39,32 @@ def main(cfg: DictConfig):
     else:
         run = None
         # 평가 전용 모드일 때 사용할 기존 모델의 타임스탬프 (config에서 관리 권장)
-        timestamp = cfg.get("eval_timestamp", "26-00-00_00-00-00")
+        timestamp = cfg.get("eval_timestamp", "00-00-00_00-00-00")
         save_dir = Path(f"{cfg.artifact.dir}{timestamp}")
 
 
     '''2. 이미지 증강 정의 (Test용은 항상 필요)'''
+    # 가장 올바른 Compose 구성 예시
     test_transform = transforms.Compose([
+        transforms.Resize(256),
+        # [Batch, 10, C, H, W]
+        # 여기서 (img1, img2, ..., img10) 튜플 반환
+        transforms.TenCrop(224),
+        # Evaluation/Metric에서 처리하는 코드가 존재하나
+        # 핵심 수정 부분: 튜플 내 각 이미지에 대해 ToTensor와 Normalize를 적용하고 스택함
+        transforms.Lambda(lambda crops: torch.stack([
+            transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])(crop) for crop in crops
+        ]))
+    ])
+    val_transform = transforms.Compose([
+        # 1. 짧은 축을 256으로 리사이즈 (종횡비 유지)
         transforms.Resize(256, interpolation=InterpolationMode.BILINEAR),
-        transforms.TenCrop(224), # Evaluation/Metric에서 처리
+        # 2. 중앙에서 모델 입력 크기인 224x224만큼 크롭 (고정된 영역)
+        transforms.CenterCrop(224),
+        # 3. 텐서 변환 및 정규화 (학습과 동일한 파라미터)
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
@@ -61,14 +80,15 @@ def main(cfg: DictConfig):
         train_transform = None
 
 
+
     '''3. 데이터셋 및 샘플러 설정'''
     # dataset 객체 생성 (transform은 내부에서 관리)
-    dataset = ImageNet100(cfg, train_transform, test_transform)
+    dataset = ImageNet100(cfg, test_transform)
 
     # 모드별 데이터 로딩 분기
     if TRAIN_MODE:
-        train_dataset = dataset.get_trainsets()
-        train_set, val_set = random_split(train_dataset, [105000, 25000], generator=g)
+        train_set, val_set = dataset.get_split_datasets(train_transform, val_transform)
+        
         train_sampler = DistributedSampler(train_set, shuffle=True) if env["is_dist"] else None
         val_sampler = DistributedSampler(val_set, shuffle=False) if env["is_dist"] else None
     
@@ -104,23 +124,29 @@ def main(cfg: DictConfig):
     model = EfficientNet(base_config, num_classes=cfg.model.num_classes).to(env["device"])
     
     if env["is_dist"]:
+        # [핵심 추가] 모든 GPU의 BN 통계를 동기화하여 수치 안정성 확보
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model)
         model = DDP(model, device_ids=[env["local_rank"]], output_device=env["local_rank"])
 
 
     '''6 & 7. 학습 로직 (TRAIN_MODE일 때만 로딩)'''
     if TRAIN_MODE:
         # 최적화 도구 및 스케줄러 설정
-        scaled_lr = 0.256 * (cfg.train.batch_size / 4096)
+        # scaled_lr = 0.256 * (cfg.train.batch_size / 4096)
+        # 기존 0.256 또는 0.1에서 0.04로 대폭 하향
+        scaled_lr = 0.04 * (cfg.train.batch_size / 256)
         optimizer = torch.optim.RMSprop(
             model.parameters(), lr=scaled_lr, alpha=0.9, momentum=cfg.optimizer.momentum,
-            eps=0.001, weight_decay=cfg.optimizer.w_decay
-        )
-        warmup_sch = LambdaLR(optimizer, lr_lambda=lambda ep: (ep+1)/1- if ep < 10 else 1.0)
+            eps=0.01, weight_decay=cfg.optimizer.w_decay
+        )    # original : eps=0.001
+# 10에포크 동안 0.1, 0.2, ..., 1.0배로 증가
+        warmup_epochs = 45
+        warmup_sch = LambdaLR(optimizer, lr_lambda=lambda ep: (ep + 1) / warmup_epochs if ep < warmup_epochs else 1.0)
         main_sch = StepLR(optimizer, step_size=cfg.scheduler.step_size, gamma=cfg.scheduler.gamma)
         # main_sch = CosineAnnealingLR()
-        scheduler = SequentialLR(optimizer, schedulers=[warmup_sch, main_sch], milestones=[5])
+        scheduler = SequentialLR(optimizer, schedulers=[warmup_sch, main_sch], milestones=[warmup_epochs])
 
-        ema = EMA(model, decay=0.9999)
+        ema = EMA(model, decay=cfg.ema.decay)
         criterion = nn.CrossEntropyLoss()
 
         # 학습 실행
@@ -144,13 +170,36 @@ def main(cfg: DictConfig):
         model_eval.add_detailed_report(best_model_path, test_loader)
         model_eval.add_top_k_error(best_model_path, test_loader)
         
+        # 모든 프로세스가 지표 계산을 마칠 때까지 대기
+        if dist.is_initialized():
+            dist.barrier()
+
         # 파일 추출만 마스터 노드에서 수행
         if env["is_master"]:
             model_eval.export(f"{save_dir}/")
-    else:
-        if env["is_master"]:
-            print(f"[Warning] Best model not found in {save_dir}")
+            
+            # [추가] 고확신 오답 분석 및 Grad-CAM 시각화
+            json_files = sorted(glob.glob(str(save_dir / "misclassified_ep*.json")))
+            if json_files:
+                visualizer = Visualize(model, env["device"], dataset.get_classes(), timestamp)
+                groups = visualizer.get_quartile_groups(json_files[-1])
+                if groups:
+                    visualizer.plot_confidence_grid(groups, save_dir)
+                    # validation transform을 적용함에 유의
+                    # visualizer.plot_gradcam_q4(groups, best_model_path, val_transform, save_dir)
+        else:
+            if env["is_master"]:
+                print(f"[Warning] Best model not found in {save_dir}")
 
+
+
+    # 안전한 종료
+    try:
+        # ... 기존 학습 및 평가 로직 ...
+        model_eval.export(f"{save_dir}/")
+    finally:
+        if dist.is_initialized():
+            dist.destroy_process_group() # 분산 환경 자원 해제
 
 if __name__ == "__main__":
     main()
