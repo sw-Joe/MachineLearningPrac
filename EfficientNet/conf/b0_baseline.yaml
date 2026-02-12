@@ -5,7 +5,8 @@ seed: 100
 device: cuda:0    # cuda:2
 model_name: "EfficientNet-B0"
 # train_n_eval | eval_only
-run: train_n_eval
+# mode: train_n_eval
+mode: eval_only
 
 # ========================================
 # 데이터셋 설정
@@ -45,7 +46,7 @@ optimizer:
 # ========================================
 train:
   batch_size: 1024    # EfficientNet-B0, ImageNet100, RTX 4090 24GB * 2 기준 최대 
-  epochs: 160
+  epochs: 400
   num_workers: 8    # 멀티프로세싱을 통한 데이터 로딩 병렬화
   pin_memory: true
   # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
@@ -74,6 +75,12 @@ wandb:
     dataset: "ImageNet100"
     architecture: "EfficientNet-B0"
     task: "multi-class_classification"
+
+# ========================================
+# EMA
+# ========================================
+ema:
+  decay: 0.9
 
 # ========================================
 # Artifacts
