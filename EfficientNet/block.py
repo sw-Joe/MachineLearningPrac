@@ -117,15 +117,28 @@ class EfficientNet(nn.Module):
             
         return nn.Sequential(*layers)
     
+    # def _initialize_weights(self):
+    #     """Initialize network weights using proper initialization schemes"""
+    #     for m in self.modules():
+    #         if isinstance(m, nn.Conv2d):
+    #             # He initialization for convolutional layers
+    #             nn.init.kaiming_normal_(m.weight, mode='fan_out')
+    #         elif isinstance(m, nn.BatchNorm2d):
+    #             # Initialize batch norm parameters
+    #             nn.init.constant_(m.weight, 1)
+    #             nn.init.constant_(m.bias, 0)
+
     def _initialize_weights(self):
-        """Initialize network weights using proper initialization schemes"""
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
-                # He initialization for convolutional layers
-                nn.init.kaiming_normal_(m.weight, mode='fan_out', 
-                                        nonlinearity='relu')
-            elif isinstance(m, nn.BatchNorm2d):
-                # Initialize batch norm parameters
+                # Kaiming보다 안정적인 'fan_out' 방식 사용
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='leaky_relu')
+            elif isinstance(m, nn.Linear):
+                # [추가] 마지막 분류 레이어 초기화 (매우 중요)
+                nn.init.normal_(m.weight, 0, 0.01)
+                nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d) or isinstance(m, nn.SyncBatchNorm):
+                # [추가] SyncBN 대응 포함
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
