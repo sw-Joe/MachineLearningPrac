@@ -6,14 +6,13 @@ from pathlib import Path # Path 객체 사용을 위해 추가
 import torch
 import torch.distributed as dist
 from torch.amp.autocast_mode import autocast
-import wandb
 
-from ml_core.metric import MetricTracker
+from ml_core.metric import MetricTracker, ClassificationTracker
 
 
 
 class Trainer:
-    def __init__(self, model, optimizer, criterion, scheduler, device, ema, config):
+    def __init__(self, model, optimizer, criterion, scheduler, device, ema=None, config=None):
         self.model = model
         self.optimizer = optimizer
         self.criterion = criterion
@@ -30,6 +29,7 @@ class Trainer:
         # 트래커 초기화
         self.train_tracker = MetricTracker(topk=(1, 5), device=device)
         self.val_tracker = MetricTracker(topk=(1, 5), device=device)
+        self.clf_metric = ClassificationTracker(classes=config.dataset.label)
         self.best_val_loss = float("inf")
 
 
@@ -59,6 +59,7 @@ class Trainer:
 
 
     def _train_epoch(self, loader, run_id):
+        """Step Logging"""
         self.model.train()
         for x, y, _ in loader:
             x, y = x.to(self.device, non_blocking=True).bfloat16(), y.to(self.device, non_blocking=True)
@@ -69,26 +70,33 @@ class Trainer:
 
             self.optimizer.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            # torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=0.5)
+
             self.optimizer.step()
-            self.ema.update()
+            if self.ema != None:
+                self.ema.update()
+
+            # 현재 학습률 추출 (optimizer의 첫 번째 파라미터 그룹 기준)
+            current_lr = self.optimizer.param_groups[0]['lr']
 
             self.train_tracker.update(loss.item(), predicts, y)
             
-            # 기존 train.py의 상세 step 로깅 복구
+            '''Step Logging'''
             if self.is_master and run_id:
                 run_id.log({
-                    "train/step_loss": loss.item(),
-                    "train/step_acc": (predicts.argmax(1) == y).float().mean().item(),
-                    "train/step_top1_err": self.train_tracker.get_error_rate(1),
-                    "train/step_top5_err": self.train_tracker.get_error_rate(5),
+                    "train/lr": current_lr, # 시각적으로 확인하기 위해 추가
+                    # "train/step_loss": loss.item(),
+                    # "train/step_acc": (predicts.argmax(1) == y).float().mean().item(),
                 })
 
 
     @torch.no_grad()
     def _validate_epoch(self, loader):
         self.model.eval()
-        self.ema.apply_shadow()
+        self.clf_metric.reset()    # 검증 시작 시 초기화
+        if self.ema != None:
+            self.ema.apply_shadow()
         local_misclassified = []
 
         for x, y, paths in loader:
@@ -97,6 +105,8 @@ class Trainer:
                 predicts = self.model(x)
                 # 비용 함수 계산 추가
                 loss = self.criterion(predicts, y)
+                # [추가] F1 계산을 위한 배치 데이터 업데이트
+                self.clf_metric.update_batch(predicts, y)
 
             # 트래커 업데이트 로직 복구
             self.val_tracker.update(loss.item(), predicts, y)
@@ -119,18 +129,19 @@ class Trainer:
                 total_misclassified = []
         else:
             total_misclassified = local_misclassified
-
-        self.ema.restore()
+        if self.ema != None:
+            self.ema.restore()
         return total_misclassified
 
 
     def _handle_epoch_end(self, epoch, n_epochs, run_id, save_path, misclassified):
+        """Epoch Logging, 최적모델 저장"""
         # WandB 차트 정렬을 위한 metric 정의 (첫 에포크에만 실행)
         if epoch == 0 and run_id:
             run_id.define_metric("train/epoch_*", step_metric="epoch")
             run_id.define_metric("validation/epoch_*", step_metric="epoch")
 
-        # 최적 모델 판단
+        # 최적 모델 판단(loss 기준 판단)
         if self.val_tracker.avg_loss < self.best_val_loss:
             self.best_val_loss = self.val_tracker.avg_loss
             self._save_checkpoint(save_path, epoch)
@@ -138,6 +149,10 @@ class Trainer:
 
         if self.scheduler:
             self.scheduler.step()
+
+        # [추가] F1-Score 및 상세 리포트 산출 (마스터 노드에서만 실행)
+        f1_macro = self.clf_metric.get_f1_score(average='macro')
+        report = self.clf_metric.get_report()
             
         # Epoch Summary
         print(f'Epoch: {epoch+1:03d}/{n_epochs} | '
@@ -145,15 +160,22 @@ class Trainer:
             f'Train Acc: {self.train_tracker.accuracy*100:.2f}% | '
             f'Val Loss: {self.val_tracker.avg_loss:.4f} | '
             f'Val Acc: {self.val_tracker.accuracy*100:.2f}%')
+        
+        # 클래스별 상세 리포트 출력
+        print(f"\n[Classification Report]\n{report}")
 
+        # Epoch Logging
         if run_id:
             run_id.log({
                 "train/epoch_acc": self.train_tracker.accuracy,
                 "train/epoch_loss": self.train_tracker.avg_loss,
+                "train/top1_err": self.train_tracker.get_error_rate(1),
+                "train/top5_err": self.train_tracker.get_error_rate(5),
                 "validation/epoch_acc": self.val_tracker.accuracy,
                 "validation/epoch_loss": self.val_tracker.avg_loss,
-                "validation/epoch_top1_err": self.val_tracker.get_error_rate(1),
-                "validation/epoch_top5_err": self.val_tracker.get_error_rate(5),
+                "validation/top1_err": self.val_tracker.get_error_rate(1),
+                "validation/top5_err": self.val_tracker.get_error_rate(5),
+                "validation/epoch_f1_macro": f1_macro,
                 "epoch": epoch + 1
             })
 
@@ -183,8 +205,8 @@ class Trainer:
                 "file_path": paths[idx],
                 "true_label": targets[idx].item(),
                 "pred_label": preds[idx].item(),
-                "confidence": probs[idx][preds[idx]].item(), # 모델이 얼마나 확신했는지 기록
-            })
+                "confidence": probs[idx][preds[idx]].half.item(), # 모델이 얼마나 확신했는지 기록
+            })    # half(): float16, float(): float32
 
 
     def _save_checkpoint(self, save_path, epoch):
