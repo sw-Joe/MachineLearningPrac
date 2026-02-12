@@ -4,7 +4,7 @@ import torch
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
-                             f1_score, confusion_matrix, roc_auc_score)
+                             f1_score, confusion_matrix, roc_auc_score, classification_report)
 import torch
 import torch.distributed as dist
 
@@ -103,3 +103,48 @@ class MetricTracker:
         idx = self.topk.index(k)
         acc = (self.correct_counts[idx] / self.total).item()
         return (1.0 - acc) * 100
+    
+
+# [신규] F1-score 및 상세 리포트 전용 트래커
+class ClassificationTracker:
+    def __init__(self, classes=None):
+        self.classes = classes
+        self.reset()
+
+    def reset(self):
+        self.all_preds = []
+        self.all_targets = []
+
+    def update_batch(self, outputs, targets):
+        """배치 예측값 수집 (GPU -> CPU 이동으로 메모리 보호)"""
+        with torch.no_grad():
+            _, preds = torch.max(outputs, 1)
+            self.all_preds.append(preds.cpu())
+            self.all_targets.append(targets.cpu())
+
+    def _gather_all(self):
+        """DDP 환경에서 모든 GPU의 예측치를 마스터 노드로 수집"""
+        preds = torch.cat(self.all_preds)
+        targets = torch.cat(self.all_targets)
+        
+        if dist.is_initialized():
+            # 각 GPU의 결과를 리스트로 모음
+            world_size = dist.get_world_size()
+            gathered_preds = [torch.zeros_like(preds) for _ in range(world_size)]
+            gathered_targets = [torch.zeros_like(targets) for _ in range(world_size)]
+            
+            dist.all_gather(gathered_preds, preds)
+            dist.all_gather(gathered_targets, targets)
+            
+            preds = torch.cat(gathered_preds)
+            targets = torch.cat(gathered_targets)
+            
+        return preds.numpy(), targets.numpy()
+
+    def get_f1_score(self, average='macro'):
+        preds, targets = self._gather_all()
+        return f1_score(targets, preds, average=average, zero_division=0)
+
+    def get_report(self):
+        preds, targets = self._gather_all()
+        return classification_report(targets, preds, target_names=self.classes, zero_division=0)
