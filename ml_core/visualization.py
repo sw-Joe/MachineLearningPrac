@@ -26,17 +26,26 @@ class Visualize(BaseEvaluator):
 
 
     def _generate_gradcam(self, model, img_tensor, target_cls):
-        """ layer4 기준 히트맵 생성"""
-        target_layer = model.layer4[-1] 
+        """ DDP 모델 대응 및 EfficientNet stages 기준 히트맵 생성 """
+        
+        # 1. DDP 래퍼 제거 (속성 접근을 위해 실제 모델 추출)
+        actual_model = model.module if hasattr(model, 'module') else model
+        
+        # 2. EfficientNet의 마지막 스테이지 블록 선택 (layer4 대신 stages[-1] 사용)
+        # stages는 ModuleList이므로 마지막 스테이지의 마지막 MBConv 블록을 타겟으로 잡습니다.
+        target_layer = actual_model.stages[-1][-1] 
+        
         h_f = target_layer.register_forward_hook(self._hook_acts)
         h_b = target_layer.register_full_backward_hook(lambda m, i, o: self._hook_grads(o[0]))
 
         model.zero_grad()
-        with autocast(device_type=self.device.type, dtype=torch.bfloat16): #
+        # 훈련 시와 동일하게 bfloat16 지원
+        with autocast(device_type=self.device.type, dtype=torch.bfloat16):
             output = model(img_tensor)
             score = output[0][target_cls]
         score.backward()
 
+        # 가중치 계산 및 ReLU 적용
         weights = torch.mean(self.gradients, dim=(2, 3), keepdim=True)
         gradcam = F.relu(torch.sum(weights * self.activations, dim=1).squeeze())
         
@@ -46,7 +55,7 @@ class Visualize(BaseEvaluator):
 
     # --- [데이터 분석 영역] ---
     def get_quartile_groups(self, json_path):
-        """misclassified.json을 분석하여 $Q_1 \sim Q_4$ 그룹으로 분류해 반환합니다."""
+        """misclassified.json을 분석하여 Q1부터 Q4까지 그룹으로 분류해 반환합니다."""
         with open(json_path, "r", encoding="utf-8") as f:
             errors = json.load(f)
 
@@ -93,7 +102,8 @@ class Visualize(BaseEvaluator):
 
     # --- [시각화 영역 2: Grad-CAM] ---
     def plot_gradcam_q4(self, groups, model_path, transform, save_dir):
-        """$Q_4$(고확신 오답) 그룹에 대해 Grad-CAM 히트맵을 생성합니다."""
+        """Q4(고확신 오답) 그룹에 대해 Grad-CAM 히트맵을 생성합니다."""
+
         q4_samples = groups["Q4"][:4] # 가장 확신이 높았던 4개 추출
         
         with self._prepare_model(model_path) as model: #
