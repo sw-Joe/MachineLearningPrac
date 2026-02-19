@@ -16,7 +16,7 @@ class BaseEvaluator:
     모든 평가 및 시각화 클래스의 모체가 되는 상위 클래스입니다.
     모델 상태 관리 및 추론 엔진 등 공통 핵심 로직을 포함합니다.
     """
-    def __init__(self, model, device, classes, time):
+    def __init__(self, model, device, classes: list | list[list], time):
         # DDP 환경 변수 추가 정의
         self.is_dist = dist.is_initialized()
         self.rank = dist.get_rank() if self.is_dist else 0
