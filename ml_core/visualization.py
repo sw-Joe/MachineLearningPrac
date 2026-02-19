@@ -92,15 +92,16 @@ class Visualize(BaseEvaluator):
                     img = Image.open(s['file_path']).convert("RGB")
                     ax.imshow(img)
                     title = f"[{q_key}]\nTrue: {self.classes[s['true_label']].split(',')[0]}\nPred: {self.classes[s['pred_label']].split(',')[0]}\nConf: {s['confidence']:.4f}"
-                    ax.set_title(title, fontsize=10, color="red" if q_key == "Q4" else "black")
+                    ax.set_title(title, fontsize=18, color="red" if q_key == "Q4" else "black")
                 ax.axis('off')
         
-        plt.suptitle(f"Confidence Quartile Analysis ({self.time})", fontsize=20)
+        plt.suptitle(f"Confidence Quartile Analysis ({self.time})", fontsize=28)
         plt.savefig(f"{save_dir}/confidence_grid_{self.time}.png", bbox_inches='tight')
         plt.close()
 
 
     # --- [시각화 영역 2: Grad-CAM] ---
+    # layer 관련 Fatal Error 존재 -> 수정해야 함
     def plot_gradcam_q4(self, groups, model_path, transform, save_dir):
         """Q4(고확신 오답) 그룹에 대해 Grad-CAM 히트맵을 생성합니다."""
 
@@ -126,11 +127,72 @@ class Visualize(BaseEvaluator):
             plt.close()
 
 
+    def confusion_matrix_visualization(self, y_true, y_pred, save_dir) -> None:
+        """
+        다중 클래스에 최적화된 혼동 행렬 시각화.
+        클래스 수가 너무 많으면 가독성 경고를 출력합니다.
+        """
+        num_classes = len(self.classes)
+        
+        # 1. 가독성 임계값 체크 (약 20~30개 이상일 때)
+        # 가독성 면에서 20개를 넘어가면 개별 셀의 수치를 읽기 어려워집니다.
+        MAX_READABLE_CLASSES = 25
+        if num_classes > MAX_READABLE_CLASSES:
+            print(f"⚠️ [Warning] 현재 클래스 수({num_classes}개)가 너무 많아 시각화 결과의 가독성이 떨어질 수 있습니다.")
+            print(f"추천하는 최대 클래스 수는 {MAX_READABLE_CLASSES}개 이하입니다.")
+
+        # 2. Confusion Matrix 계산
+        cm = confusion_matrix(y_true, y_pred)
+        cm_sum = cm.sum(axis=1)[:, np.newaxis]
+        cm_ratio = np.divide(cm.astype('float'), cm_sum, 
+                            out=np.zeros_like(cm.astype('float')), 
+                            where=cm_sum != 0)
+
+        # 3. 클래스 수에 따른 동적 크기 조절 (최소 10, 최대는 클래스 수 비례)
+        # 한 클래스당 약 0.5인치 정도의 공간을 확보하도록 설정
+        plot_size = max(10, num_classes * 0.5)
+        plt.figure(figsize=(plot_size, plot_size * 0.8))
+        
+        # 클래스 수가 너무 많으면(예: 30개 초과) 숫자를 표시하지 않는 것이 더 깔끔할 수 있습니다.
+        show_annot = True if num_classes <= 30 else False
+        
+        if show_annot:
+            group_counts = ["{0:0.0f}".format(value) for value in cm.flatten()]
+            group_percentages = ["({0:.1%})".format(value) for value in cm_ratio.flatten()]
+            labels_combined = [f"{v1}\n{v2}" for v1, v2 in zip(group_counts, group_percentages)]
+            labels_combined = np.asarray(labels_combined).reshape(num_classes, num_classes)
+        else:
+            labels_combined = None # 클래스가 너무 많으면 텍스트 생략
+
+        sns.heatmap(
+            cm,
+            annot=labels_combined if show_annot else False,
+            fmt="",
+            cmap='Blues',
+            xticklabels=self.classes,
+            yticklabels=self.classes,
+            cbar_kws={'label': 'Number of samples'}
+        )
+        
+        plt.xlabel("Prediction", fontsize=12, fontweight='bold')
+        plt.ylabel("Ground Truth", fontsize=12, fontweight='bold')
+        plt.title(f"Confusion Matrix (Multi-class)\nTime: {self.time}", fontsize=15, pad=20)
+        
+        plt.xticks(rotation=45, ha='right') # 라벨이 겹치지 않게 정렬 조정
+        plt.yticks(rotation=0)
+        
+        plt.tight_layout()
+        plt.savefig(f"{save_dir}/confusion_matrix_{self.time}.png", dpi=150)
+        plt.close()
+
+
+
 
 """ lagacy code """
 def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) -> None:
     """
     이진 분류(cat vs dog)에 대한 confusion matrix 및 평가 지표 출력
+    (self, model_status_PATH, classes, time, path, device)
     """
     model.load_state_dict(torch.load(model_status_PATH))
     model.eval()
@@ -165,69 +227,6 @@ def eval_confusion_matrix(model, model_status_PATH, test_loader, classes, time) 
     plt.tight_layout()
     plt.savefig(f"confusion_matrix_{time}.png")
     plt.close()
-
-
-def eval_confusion_matrix_multiclass(model, model_status_PATH, test_loader, classes, time, path) -> None:
-    """
-    다중 클래스에 최적화된 혼동 행렬 시각화 및 평가 지표 출력
-    """
-    model.load_state_dict(torch.load(model_status_PATH, map_location=DEVICE))
-    model.eval()
-
-    y_true = []
-    y_pred = []
-
-    # 1. 예측 데이터 수집
-    with torch.no_grad():
-        for imgs, labels in test_loader:
-            imgs, labels = imgs.to(DEVICE), labels.to(DEVICE)
-            outputs = model(imgs)
-            _, predicted = torch.max(outputs, 1)
-
-            y_true.extend(labels.cpu().numpy())
-            y_pred.extend(predicted.cpu().numpy())
-
-    # 2. Confusion Matrix 계산
-    cm = confusion_matrix(y_true, y_pred)
-    # 각 행(Ground Truth)의 합으로 나누어 정규화된 행렬(비율) 생성
-    cm_ratio = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
-
-    # 3. 시각화 (크기를 10x8로 키워 가독성 확보)
-    plt.figure(figsize=(10, 8))
-    
-    # annot 부분에 실제 개수(d)와 비율(.1%)을 함께 표시할 수 있도록 구성
-    # (선택 사항: 복잡해 보인다면 fmt='d'로 유지해도 좋습니다)
-    group_counts = ["{0:0.0f}".format(value) for value in cm.flatten()]
-    group_percentages = ["({0:.1%})".format(value) for value in cm_ratio.flatten()]
-    labels_combined = [f"{v1}\n{v2}" for v1, v2 in zip(group_counts, group_percentages)]
-    labels_combined = np.asarray(labels_combined).reshape(len(classes), len(classes))
-
-    sns.heatmap(
-        cm,
-        annot=labels_combined, # 개수와 비율 병기
-        fmt="",                # 문자열 형식을 그대로 사용
-        cmap='Blues',          # 색상 가독성이 좋은 Blue 계열 유지
-        xticklabels=classes,
-        yticklabels=classes,
-        cbar_kws={'label': 'Number of samples'}
-    )
-    
-    plt.xlabel("Prediction", fontsize=12, fontweight='bold')
-    plt.ylabel("Ground Truth", fontsize=12, fontweight='bold')
-    plt.title(f"Confusion Matrix (Multi-class)\nTime: {time}", fontsize=15, pad=20)
-    
-    # 클래스 이름이 길 경우 겹치지 않게 회전
-    plt.xticks(rotation=45)
-    plt.yticks(rotation=0)
-    
-    plt.tight_layout()
-    plt.savefig(f"{path}{time}/confusion_matrix_{time}.png", dpi=150)
-    plt.show()
-    plt.close()
-
-    # 4. Classification Report 출력 (상세 지표)
-    print("\n[Classification Report]")
-    print(classification_report(y_true, y_pred, target_names=classes))
 
 
 def visualize_classification_results(model, model_status_PATH, test_loader, classes, time, num_samples=4):
