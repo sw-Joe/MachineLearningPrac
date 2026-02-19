@@ -5,8 +5,8 @@ seed: 100
 device: cuda:0    # cuda:2
 model_name: "Ensemble"
 # train_n_eval | eval_only
-mode: train_n_eval
-# mode: eval_only
+# mode: train_n_eval
+mode: eval_only
 
 # ========================================
 # 데이터셋 설정
@@ -26,6 +26,7 @@ model:
   name: "Ensemble"
   input_size: 224*224, 380*380
   num_classes: 7
+  drop_path_rate: 0.35
 
 # ========================================
 # Learning Rate Scheduler 설정
@@ -40,8 +41,8 @@ scheduler:
 # ========================================
 optimizer:
   name: AdamW
-  lr: "dynamic"
-  w_decay: 1e-2   # 1e-4
+  base_lr: 1e-3
+  w_decay: 1e-1   # 1e-4
 
 # ========================================
 # 훈련 설정
@@ -55,6 +56,19 @@ train:
   # 전송량에 따라 성능에 영향을 줄 수 있음
   persistent_worker: true
   prefetch_factor: 4
+
+# ========================================
+# 오차 함수 설정
+# ========================================
+criterion:
+  name: LabelSmoothingNLLLoss
+  label_smoothing: 0.1
+
+# ========================================
+# EMA
+# ========================================
+ema:
+  decay: 0.9999
 
 # ========================================
 # WandB 설정 (통합)
@@ -81,12 +95,6 @@ wandb:
     dataset: "HAM10000"
     architecture: "Ensemble"
     task: "multi-class_classification"
-
-# ========================================
-# EMA
-# ========================================
-ema:
-  decay: 0.999
 
 # ========================================
 # Artifacts
