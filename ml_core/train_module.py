@@ -141,18 +141,12 @@ class Trainer:
             run_id.define_metric("train/epoch_*", step_metric="epoch")
             run_id.define_metric("validation/epoch_*", step_metric="epoch")
 
-        # 최적 모델 판단(loss 기준 판단)
-        if self.val_tracker.avg_loss < self.best_val_loss:
-            self.best_val_loss = self.val_tracker.avg_loss
-            self._save_checkpoint(save_path, epoch)
-            self._save_misclassified(save_path, epoch, misclassified)
+        # [추가] F1-Score 및 상세 리포트 산출 (마스터 노드에서만 실행)
+        f1_macro = self.clf_metric.get_f1_score(average='macro')
+        report = self.clf_metric.get_report()        
 
         if self.scheduler:
             self.scheduler.step()
-
-        # [추가] F1-Score 및 상세 리포트 산출 (마스터 노드에서만 실행)
-        f1_macro = self.clf_metric.get_f1_score(average='macro')
-        report = self.clf_metric.get_report()
             
         # Epoch Summary
         print(f'Epoch: {epoch+1:03d}/{n_epochs} | '
@@ -161,8 +155,18 @@ class Trainer:
             f'Val Loss: {self.val_tracker.avg_loss:.4f} | '
             f'Val Acc: {self.val_tracker.accuracy*100:.2f}%')
         
-        # 클래스별 상세 리포트 출력
-        print(f"\n[Classification Report]\n{report}")
+        # # 최적 모델 판단(loss 기준 최적 모델)
+        # if self.val_tracker.avg_loss < self.best_val_loss:
+        #     self.best_val_loss = self.val_tracker.avg_loss
+
+        # 최적 모델 판단(macro f1-score 기준 최적 모델)
+        # 여기서는 f1_macro가 이전 최고치보다 높을 때 저장하도록 설정 제안
+        if f1_macro > getattr(self, 'best_f1', 0.0):
+            self.best_f1 = f1_macro
+            self._save_checkpoint(save_path, epoch)
+            self._save_misclassified(save_path, epoch, misclassified)
+            # 클래스별 상세 리포트 출력
+            print(f"\n[Classification Report]\n{report}")
 
         # Epoch Logging
         if run_id:
@@ -205,7 +209,7 @@ class Trainer:
                 "file_path": paths[idx],
                 "true_label": targets[idx].item(),
                 "pred_label": preds[idx].item(),
-                "confidence": probs[idx][preds[idx]].half.item(), # 모델이 얼마나 확신했는지 기록
+                "confidence": probs[idx][preds[idx]].half().item(), # 모델이 얼마나 확신했는지 기록
             })    # half(): float16, float(): float32
 
 
