@@ -22,7 +22,7 @@ from ml_core.evaluation import ModelEvaluator
 from ml_core.visualization import Visualize # 시각화 모듈 추가
 from dataset.HAM10k.load_HAM10k import HAM10000
 from ensemble.sampler import DistributedWeightedSampler, get_imbalance_tools
-from ensemble.model import CNNEnsemble
+from ensemble.model import CNNEnsembleByTorchVision
 
 
 
@@ -211,7 +211,7 @@ def main(cfg: DictConfig):
 
     '''5. 모델 및 분산 설정 (항상 필요)'''
     # model = EfficientNet(base_config, num_classes=cfg.model.num_classes).to(env["device"])
-    model = CNNEnsemble().to(env["device"])
+    model = CNNEnsembleByTorchVision().to(env["device"])
 
     
     if env["is_dist"]:
@@ -252,7 +252,7 @@ def main(cfg: DictConfig):
         weights = weights / weights.sum() * 7.0
         # criterion = nn.CrossEntropyLoss(weight=weights.to(env["device"]),
         #                                 label_smoothing=0.1)
-        criterion = LabelSmoothingNLLLoss(weight=weights, smoothing=0.1).to(env["device"])
+        criterion = LabelSmoothingNLLLoss(weight=weights, smoothing=cfg.criterion.label_smoothing).to(env["device"])
 
 
         # 학습 실행
@@ -270,7 +270,7 @@ def main(cfg: DictConfig):
 
     if best_model_path:
         # 모든 Rank가 Evaluator 인스턴스 생성
-        model_eval = ModelEvaluator(model, env["device"], dataset.get_classes(), timestamp)
+        model_eval = ModelEvaluator(model, env["device"], cfg.dataset.label, timestamp)
         
         # 모든 Rank가 add_... 메서드에 진입 (내부에서 동기화 수행)
         model_eval.add_detailed_report(best_model_path, test_loader)
