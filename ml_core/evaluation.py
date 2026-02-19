@@ -141,6 +141,8 @@ class ModelEvaluator(BaseEvaluator):
             })
             
         print(f"✅ {tag} 상세 리포트가 누적되었습니다.")
+        
+        return y_true, y_pred
 
 
     def export(self, file_path):
@@ -166,4 +168,6 @@ class ModelEvaluator(BaseEvaluator):
                     f.write(f" > Details:\n{m['raw_str']}\n")
                 f.write("-" * 40 + "\n")
         
-        print(f"\n✅ 리포트 추출 완료 : {full_path}")
+        ### 재검토
+        if self.rank == 0:    # 마스터 노드에서만
+            print(f"\n✅ 리포트 추출 완료 : {full_path}")
