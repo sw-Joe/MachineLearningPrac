@@ -20,8 +20,8 @@ cat_n_dog/img/
 mnist/mnist_png/
 cifar10/cifar-10-batches-py/
 dataset/
-wandb/
-outputs/
+# outputs - model status file, result img
+result/
 
 # vscode
 .vscode/
@@ -31,3 +31,6 @@ outputs/
 
 # hydra
 outputs/
+
+# wandb
+wandb/
