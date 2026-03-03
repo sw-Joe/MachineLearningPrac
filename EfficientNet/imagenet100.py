@@ -19,7 +19,7 @@ from torchvision.transforms import InterpolationMode
 from EfficientNet.read_dataset import ImageNet100
 from EfficientNet.block import EfficientNet
 # from ml_core.train import fit
-from ml_core.train_module import Trainer
+from engine.train import Trainer
 from ml_core.evaluation import ModelEvaluator
 from ml_core.ema import EMA
 

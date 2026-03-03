@@ -14,10 +14,10 @@ import hydra
 from omegaconf import DictConfig
 
 from ml_core.setup import EnvSetup
-from ml_core.train_module import Trainer
+from engine.train import Trainer
 from ml_core.ema import EMA
 from ml_core.evaluation import ModelEvaluator
-from ml_core.visualization import Visualize # 시각화 모듈 추가
+from ml_core.visualization import Visualizer # 시각화 모듈 추가
 from EfficientNet.read_dataset import ImageNet100
 from EfficientNet.block import EfficientNet
 
@@ -151,8 +151,8 @@ def main(cfg: DictConfig):
 
         # 학습 실행
         trainer = Trainer(
-            model=model, optimizer=optimizer, criterion=criterion, 
-            scheduler=scheduler, device=env["device"], ema=ema, config=cfg
+            device=env["device"], model=model, optimizer=optimizer, criterion=criterion, 
+            scheduler=scheduler, ema=ema, config=cfg
         )
         trainer.fit(train_loader, val_loader, cfg.train.epochs, run, save_dir)
 
@@ -181,7 +181,7 @@ def main(cfg: DictConfig):
             # [추가] 고확신 오답 분석 및 Grad-CAM 시각화
             json_files = sorted(glob.glob(str(save_dir / "misclassified_ep*.json")))
             if json_files:
-                visualizer = Visualize(model, env["device"], dataset.get_classes(), timestamp)
+                visualizer = Visualizer(model, env["device"], dataset.get_classes(), timestamp)
                 groups = visualizer.get_quartile_groups(json_files[-1])
                 if groups:
                     visualizer.plot_confidence_grid(groups, save_dir)
