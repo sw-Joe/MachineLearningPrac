@@ -1,0 +1,100 @@
+# ========================================
+# 프로젝트 설정
+# ========================================
+seed: 100
+device: cuda:0    # cuda:2
+model_name: "CNNRegression"
+# train_n_eval | eval_only
+mode: train_n_eval
+# mode: eval_only
+
+
+# ========================================
+# 데이터셋 설정
+# ========================================
+dataset:
+  dir: "dataset/UTKface/img_src"
+  
+  label_category: ['age', 'gender', 'race']
+  target_size: 224 * 224
+  split: [0.8, 0.1, 0.1]
+
+# ========================================
+# 모델 설정
+# ========================================
+model:
+  name: CNNRegression
+  input_size: 224*224
+  # drop_path_rate: 0.35
+
+# ========================================
+# 훈련 설정
+# ========================================
+train:
+  batch_size: 512
+  epochs: 100
+  num_workers: 8    # 멀티프로세싱을 통한 데이터 로딩 병렬화
+  pin_memory: true
+  # DRAM 대신 VRAM에 업로드하여 GPU로의 전송효율 상승
+  # 전송량에 따라 성능에 영향을 줄 수 있음
+  persistent_worker: true
+  prefetch_factor: 4
+
+
+# ========================================
+# 오차 함수 설정
+# ========================================
+criterion:
+  name: MSELoss
+  # label_smoothing: 0.1
+
+# ========================================
+# 옵티마이저 설정
+# ========================================
+optimizer:
+  name: AdamW
+  base_lr: 1e-3
+  w_decay: 1e-1   # 1e-4
+
+# ========================================
+# Learning Rate Scheduler 설정
+# ========================================
+scheduler:
+  type: "stepLR"
+  step_size: 2
+  gamma: 0.97
+
+
+# ========================================
+# EMA
+# ========================================
+ema:
+  decay: 0.995
+
+# ========================================
+# WandB 설정 (통합)
+# ========================================
+wandb:
+  enabled: true
+  project: "BTKface-Regression"
+  entity: null
+  tags:
+    - cnn
+    - pytorch
+    - ResNet-18
+  
+  log:
+    log_freq: 100
+    log_model: true
+    log_gradients: false
+  
+  metadata:
+    dataset: "BTKface"
+    architecture: "Ensemble"
+    task: "Regression"
+
+# ========================================
+# Artifacts
+# ========================================
+artifact:
+  dir: "face/result/"
