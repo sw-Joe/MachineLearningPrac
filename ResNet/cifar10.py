@@ -1,4 +1,5 @@
 from datetime import datetime
+from evaluation import classification_eval
 import numpy as np
 from pathlib import Path
 import pickle
@@ -17,7 +18,7 @@ from torchvision import transforms
 from ResNet.building_block import ResNet, BasicBlock
 from ml_core.preprocessing import BinaryDataset
 from ml_core.train import fit
-from ml_core.evaluation import (evaluation, eval_error, eval_confusion_matrix_multiclass, 
+from ml_core.evaluation import (eval_error, eval_confusion_matrix_multiclass, 
                                    visualize_cifar10_results, print_detailed_evaluation)
 
 
@@ -151,7 +152,7 @@ def main(cfg: DictConfig):
     classes = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 
     # metric
-    evaluation(model, path_model_status_saved, testset_loader, classes)    # accuracy, precision, recall
+    classification_eval(model, path_model_status_saved, testset_loader, classes)    # accuracy, precision, recall
     eval_error(model, path_model_status_saved, testset_loader)
     print_detailed_evaluation(model, path_model_status_saved, testset_loader, DEVICE)    # top-1, top-5 error rate
     # # visualization img
