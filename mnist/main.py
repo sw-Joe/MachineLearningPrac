@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from evaluation import classification_eval
 import hydra
 from omegaconf import DictConfig
 import wandb
@@ -14,7 +15,7 @@ from ml_core.model import Model1GrayscaleMulticlass
 from ml_core.preprocessing import CustomDataset
 # from ml_core.split_data import DatasetSplit
 from ml_core.train import fit
-from ml_core.evaluation import (evaluation, eval_confusion_matrix_multiclass, visualize_classification_results,
+from ml_core.evaluation import (eval_confusion_matrix_multiclass, visualize_classification_results,
                                    visualize_mnist_results)
 
 
@@ -151,7 +152,7 @@ def main(cfg: DictConfig):
     path_model_status_saved = f"./best_model_{NOW}.pt"
     classes = [str(i) for i in range(10)]
 
-    evaluation(model, path_model_status_saved, testset_loader, classes)
+    classification_eval(model, path_model_status_saved, testset_loader, classes)
     eval_confusion_matrix_multiclass(model, path_model_status_saved, testset_loader, classes, NOW)
     # visualize_classification_results(model, path_model_status_saved, testset_loader, classes, NOW)
     visualize_mnist_results(model, path_model_status_saved, testset_loader, NOW)
